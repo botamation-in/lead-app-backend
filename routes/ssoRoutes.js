@@ -1,6 +1,6 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
-import ssoAuthMiddleware from '../middleware/ssoAuthMiddleware.js';
+import ssoAuthMiddleware, { hybridAuthMiddleware, getUserFromAuthService, getCookieConfig } from '../middleware/ssoAuthMiddleware.js';
 
 const router = express.Router();
 
@@ -61,155 +61,109 @@ router.post('/login', (req, res) => {
 });
 
 /**
- * GET /api/auth/callback
- * @desc    SSO callback - receives token from auth service and creates session
+ * GET /api/ui/sso/callback  (also /api/auth/callback)
+ * @desc    SSO callback — receives tokens from auth service, sets HTTP-only cookies,
+ *          and redirects the user to the original URL.
+ *          Supports two formats:
+ *            1. Guide format:  ?access_token=<jwt>&refresh_token=<jwt>&redirect=<url>
+ *            2. Legacy format: ?token=<jwt>&redirect=<url>
  * @access  Public
  */
 router.get('/callback', (req, res) => {
     try {
-        const { token, redirect } = req.query;
+        const { access_token, refresh_token, token, redirect } = req.query;
 
         console.log('\n========================================');
         console.log('[SSO Callback] 🔐 Processing authentication callback');
-        console.log('[SSO Callback] Token:', token ? '✓ present' : '❌ MISSING');
-        console.log('[SSO Callback] Redirect param:', redirect);
+        console.log('[SSO Callback] access_token:', access_token ? '✓ present' : '❌ missing');
+        console.log('[SSO Callback] refresh_token:', refresh_token ? '✓ present' : '❌ missing');
+        console.log('[SSO Callback] legacy token:', token ? '✓ present' : '❌ missing');
+        console.log('[SSO Callback] redirect param:', redirect);
 
+        const redirectUrl = redirect
+            ? decodeURIComponent(redirect)
+            : (process.env.FRONTEND_BASE_URL || 'http://localhost:5173');
+
+        // ── Format 1: auth service passes access_token + refresh_token directly ──
+        if (access_token && refresh_token) {
+            try {
+                // Verify the tokens are valid before trusting them
+                const decoded = jwt.verify(access_token, process.env.JWT_SECRET);
+                console.log('[SSO Callback] ✅ access_token verified for user:', decoded.email);
+
+                res.cookie('access_token', access_token, getCookieConfig(6 * 60 * 60 * 1000));          // 6 hours
+                res.cookie('refresh_token', refresh_token, getCookieConfig(15 * 24 * 60 * 60 * 1000));  // 15 days
+
+                console.log('[SSO Callback] ✅ Cookies set from auth-service tokens. Redirecting to:', redirectUrl);
+                return res.redirect(redirectUrl);
+            } catch (verifyError) {
+                console.error('[SSO Callback] ❌ access_token verification failed:', verifyError.message);
+                return res.status(401).json({
+                    success: false,
+                    message: 'Invalid access_token received from auth service',
+                    error: verifyError.message
+                });
+            }
+        }
+
+        // ── Format 2: legacy single-token format ──
         if (!token) {
-            console.log('[SSO Callback] ❌ No token provided');
+            console.log('[SSO Callback] ❌ No authentication tokens provided');
             return res.status(400).json({
                 success: false,
-                message: 'Missing SSO token in callback'
+                message: 'Missing authentication tokens. Expected access_token + refresh_token or token query params.'
             });
         }
 
-        // Verify the token from auth service and extract user info
         try {
-            console.log('[SSO Callback] 🔍 Verifying token from auth service...');
+            console.log('[SSO Callback] 🔍 Verifying legacy token from auth service...');
             const decoded = jwt.verify(token, process.env.JWT_SECRET);
             console.log('[SSO Callback] ✓ Token valid for user:', decoded.email);
 
-            // Generate our own access and refresh tokens
-            const accessToken = jwt.sign(
-                {
-                    userId: decoded.userId || decoded.id || decoded.email,
-                    email: decoded.email,
-                    acctId: decoded.acctId,
-                    acctNo: decoded.acctNo,
-                    role: decoded.role || 'user',
-                    permissions: decoded.permissions || []
-                },
-                process.env.JWT_SECRET,
-                { expiresIn: '15m' }
-            );
+            // Re-sign our own access and refresh tokens
+            const userPayload = {
+                userId: decoded.userId || decoded.id || decoded.email,
+                email: decoded.email,
+                acctId: decoded.acctId,
+                acctNo: decoded.acctNo,
+                role: decoded.role || 'user',
+                permissions: decoded.permissions || []
+            };
 
-            const refreshToken = jwt.sign(
-                {
-                    userId: decoded.userId || decoded.id || decoded.email,
-                    email: decoded.email,
-                    acctId: decoded.acctId,
-                    acctNo: decoded.acctNo,
-                    role: decoded.role || 'user',
-                    permissions: decoded.permissions || []
-                },
-                process.env.JWT_REFRESH_SECRET,
-                { expiresIn: '7d' }
-            );
+            const newAccessToken = jwt.sign(userPayload, process.env.JWT_SECRET, { expiresIn: '6h' });
+            const newRefreshToken = jwt.sign(userPayload, process.env.JWT_REFRESH_SECRET, { expiresIn: '15d' });
 
-            console.log('[SSO Callback] ✅ Generated new access & refresh tokens');
+            res.cookie('access_token', newAccessToken, getCookieConfig(6 * 60 * 60 * 1000));          // 6 hours
+            res.cookie('refresh_token', newRefreshToken, getCookieConfig(15 * 24 * 60 * 60 * 1000));  // 15 days
 
-            // Set HTTP-only cookies
-            res.cookie('access_token', accessToken, {
-                httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
-                sameSite: 'lax',
-                maxAge: 15 * 60 * 1000, // 15 minutes
-                path: '/'
-            });
+            console.log('[SSO Callback] ✅ Cookies set. Redirecting to:', redirectUrl);
 
-            res.cookie('refresh_token', refreshToken, {
-                httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
-                sameSite: 'lax',
-                maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-                path: '/'
-            });
-
-            console.log('[SSO Callback] ✅ Cookies set successfully');
-
-            // Instead of direct redirect, send an HTML page that will redirect after confirming cookies
-            const redirectUrl = decodeURIComponent(redirect || process.env.FRONTEND_BASE_URL || 'http://localhost:5173');
-            console.log('[SSO Callback] → Creating redirect page to:', redirectUrl);
-
-            // Send HTML page that redirects and confirms auth
             return res.send(`
                 <!DOCTYPE html>
                 <html>
                 <head>
                     <title>Login Success</title>
                     <style>
-                        body {
-                            font-family: Arial, sans-serif;
-                            display: flex;
-                            justify-content: center;
-                            align-items: center;
-                            height: 100vh;
-                            margin: 0;
-                            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                        }
-                        .container {
-                            text-align: center;
-                            background: white;
-                            padding: 40px;
-                            border-radius: 10px;
-                            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-                        }
-                        .success-icon {
-                            font-size: 64px;
-                            color: #4CAF50;
-                            margin-bottom: 20px;
-                        }
+                        body { font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+                        .container { text-align: center; background: white; padding: 40px; border-radius: 10px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); }
+                        .success-icon { font-size: 64px; color: #4CAF50; margin-bottom: 20px; }
                         h1 { color: #333; margin: 0 0 10px 0; }
                         p { color: #666; margin: 10px 0; }
-                        .redirect-info {
-                            margin-top: 20px;
-                            font-size: 14px;
-                            color: #999;
-                        }
                     </style>
                 </head>
                 <body>
                     <div class="container">
                         <div class="success-icon">✓</div>
                         <h1>Login Successful!</h1>
-                        <p>Authentication complete</p>
-                        <p>Redirecting to application...</p>
-                        <div class="redirect-info">
-                            <p>Email: ${decoded.email}</p>
-                            <p id="countdown">Redirecting in 2 seconds...</p>
-                        </div>
+                        <p>Authentication complete. Redirecting...</p>
+                        <p style="font-size:13px;color:#999;">Email: ${decoded.email}</p>
                     </div>
                     <script>
-                        console.log('✅ Authentication successful!');
-                        console.log('User:', '${decoded.email}');
-                        console.log('Cookies should be set on localhost:8083');
-                        console.log('Redirecting to:', '${redirectUrl}');
-                        
-                        let seconds = 2;
-                        const countdown = setInterval(() => {
-                            seconds--;
-                            document.getElementById('countdown').textContent = 
-                                seconds > 0 ? \`Redirecting in \${seconds} second\${seconds !== 1 ? 's' : ''}...\` : 'Redirecting now...';
-                            
-                            if (seconds <= 0) {
-                                clearInterval(countdown);
-                                window.location.href = '${redirectUrl}';
-                            }
-                        }, 1000);
+                        setTimeout(() => { window.location.href = '${redirectUrl}'; }, 1500);
                     </script>
                 </body>
                 </html>
             `);
-
         } catch (verifyError) {
             console.error('[SSO Callback] ❌ Token verification failed:', verifyError.message);
             return res.status(401).json({
@@ -256,6 +210,40 @@ router.get('/auth', ssoAuthMiddleware, (req, res) => {
 });
 
 /**
+ * GET /api/ui/sso/user
+ * @desc    Fetch fresh user data from the centralised auth service
+ * @access  Protected (requires authentication)
+ */
+router.get('/user', ssoAuthMiddleware, async (req, res) => {
+    try {
+        const accessToken = req.cookies?.access_token;
+        const freshUser = await getUserFromAuthService(accessToken);
+        if (freshUser) {
+            return res.json({ success: true, user: freshUser });
+        }
+        // Fall back to local JWT data if auth service is unreachable
+        return res.json({ success: true, user: req.user, source: 'local' });
+    } catch (error) {
+        console.error('[SSO] GET /user error:', error.message);
+        return res.status(500).json({ success: false, message: 'Failed to fetch user data' });
+    }
+});
+
+/**
+ * GET /api/ui/sso/hybrid-test
+ * @desc    Test hybrid (cookie + Bearer token) authentication
+ * @access  Protected (hybrid: cookies OR Bearer token)
+ */
+router.get('/hybrid-test', hybridAuthMiddleware, (req, res) => {
+    res.json({
+        success: true,
+        message: 'Hybrid auth working correctly',
+        user: req.user,
+        authMethod: req.headers.authorization ? 'bearer' : 'cookie'
+    });
+});
+
+/**
  * GET /api/auth/verify
  * @desc    Verify if user is authenticated
  * @access  Protected (requires authentication)
@@ -269,19 +257,30 @@ router.get('/verify', ssoAuthMiddleware, (req, res) => {
 });
 
 /**
- * POST /api/auth/logout
- * @desc    Logout user
- * @access  Protected
+ * POST /api/ui/sso/logout  (also /api/auth/logout)
+ * @desc    Logout — clears HTTP-only cookies and returns the login URL.
+ *          Public: no auth required so unauthenticated clients can still logout cleanly.
+ * @access  Public
  */
-router.post('/logout', ssoAuthMiddleware, (req, res) => {
-    // Clear both access and refresh tokens
-    res.clearCookie('access_token', { path: '/' });
-    res.clearCookie('refresh_token', { path: '/' });
-    res.clearCookie('sso_token', { path: '/' }); // Legacy cookie
+router.post('/logout', (req, res) => {
+    const cookieClearOptions = {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+        domain: process.env.COOKIE_DOMAIN || undefined,
+        path: '/'
+    };
+
+    res.clearCookie('access_token', cookieClearOptions);
+    res.clearCookie('refresh_token', cookieClearOptions);
+    res.clearCookie('sso_token', cookieClearOptions); // Legacy cookie
+
+    const loginUrl = `${process.env.AUTH_SERVICE_URL || 'http://localhost:8081'}/login`;
 
     return res.json({
         success: true,
-        message: 'Logged out successfully'
+        message: 'Logged out successfully',
+        loginUrl
     });
 });
 
@@ -408,42 +407,22 @@ router.post('/mock-auth-callback', (req, res) => {
             permissions: ['read', 'write', 'delete']
         };
 
-        // Generate access token (15 minutes)
+        // Generate access token (6 hours)
         const accessToken = jwt.sign(userData, process.env.JWT_SECRET, {
-            expiresIn: '15m'
+            expiresIn: '6h'
         });
 
-        // Generate refresh token (7 days)
+        // Generate refresh token (15 days)
         const refreshToken = jwt.sign(userData, process.env.JWT_REFRESH_SECRET, {
-            expiresIn: '7d'
+            expiresIn: '15d'
         });
 
         console.log('[MOCK AUTH CALLBACK] ✅ Access token generated (length):', accessToken.length);
         console.log('[MOCK AUTH CALLBACK] ✅ Refresh token generated (length):', refreshToken.length);
 
-        // Cookie configuration
-        const cookieOptions = {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
-            domain: process.env.COOKIE_DOMAIN || undefined,
-            path: '/'
-        };
-
-        console.log('[MOCK AUTH CALLBACK] Cookie config:', JSON.stringify(cookieOptions, null, 2));
-
-        // Set HTTP-only cookies (like real auth service would)
-        res.cookie('access_token', accessToken, {
-            ...cookieOptions,
-            maxAge: 15 * 60 * 1000 // 15 minutes
-        });
-        console.log('[MOCK AUTH CALLBACK] ✅ access_token cookie set');
-
-        res.cookie('refresh_token', refreshToken, {
-            ...cookieOptions,
-            maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
-        });
-        console.log('[MOCK AUTH CALLBACK] ✅ refresh_token cookie set');
+        res.cookie('access_token', accessToken, getCookieConfig(6 * 60 * 60 * 1000));          // 6 hours
+        res.cookie('refresh_token', refreshToken, getCookieConfig(15 * 24 * 60 * 60 * 1000));  // 15 days
+        console.log('[MOCK AUTH CALLBACK] ✅ access_token and refresh_token cookies set');
 
         const finalRedirect = redirect || process.env.FRONTEND_BASE_URL || 'http://localhost:5173';
         console.log('[MOCK AUTH CALLBACK] Final redirect URL:', finalRedirect);

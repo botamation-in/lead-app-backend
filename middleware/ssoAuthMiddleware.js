@@ -1,4 +1,36 @@
 import jwt from 'jsonwebtoken';
+import axios from 'axios';
+
+/**
+ * Returns shared cookie configuration for setting/clearing cookies.
+ * @param {number} maxAge - Cookie max-age in milliseconds
+ */
+export const getCookieConfig = (maxAge) => ({
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+    domain: process.env.COOKIE_DOMAIN || undefined,
+    path: '/',
+    ...(maxAge !== undefined ? { maxAge } : {})
+});
+
+/**
+ * Fetch fresh user data from the centralised auth service.
+ * @param {string} token - The access_token JWT string
+ */
+export const getUserFromAuthService = async (token) => {
+    try {
+        const authServiceUrl = process.env.AUTH_SERVICE_URL || 'http://localhost:8081';
+        const response = await axios.get(`${authServiceUrl}/api/auth/me`, {
+            headers: { Authorization: `Bearer ${token}` },
+            timeout: 5000
+        });
+        return response.data?.user || response.data || null;
+    } catch (error) {
+        console.error('[SSO] getUserFromAuthService error:', error.message);
+        return null;
+    }
+};
 
 /**
  * SSO Authentication Middleware
@@ -6,6 +38,21 @@ import jwt from 'jsonwebtoken';
  * Automatically refreshes expired access tokens using refresh tokens
  */
 const ssoAuthMiddleware = async (req, res, next) => {
+    // ── SKIP_LOGIN: bypass SSO for local development ──────────────
+    if (process.env.SKIP_LOGIN === 'true') {
+        req.user = {
+            userId: process.env.SKIP_LOGIN_USER_ID || 'dev-user-001',
+            email: process.env.SKIP_LOGIN_USER_EMAIL || 'dev@botamation.in',
+            name: process.env.SKIP_LOGIN_USER_NAME || 'Dev User',
+            googleEmail: process.env.SKIP_LOGIN_USER_GOOGLE_EMAIL || '',
+            profileImage: process.env.SKIP_LOGIN_USER_PROFILE_IMAGE || '',
+            role: 'admin',
+            permissions: ['read', 'write', 'delete']
+        };
+        console.log('[SSO Middleware] ⚠️  SKIP_LOGIN=true — bypassing auth for dev user:', req.user.email);
+        return next();
+    }
+
     try {
         console.log('\n========================================');
         console.log('[SSO Middleware] 🔍 NEW REQUEST:', req.method, req.path);
@@ -105,7 +152,7 @@ async function tryRefreshToken(req, res, next, refreshToken) {
         console.log('[SSO Middleware] ✓ Refresh token valid, generating new access token');
         console.log('[SSO Middleware] User:', decoded.email);
 
-        // Generate new access token
+        // Generate new access token (6 hours)
         const newAccessToken = jwt.sign(
             {
                 userId: decoded.userId,
@@ -116,18 +163,26 @@ async function tryRefreshToken(req, res, next, refreshToken) {
                 permissions: decoded.permissions
             },
             process.env.JWT_SECRET,
-            { expiresIn: '15m' } // 15 minutes
+            { expiresIn: '6h' }
         );
 
-        // Set new access token cookie
-        res.cookie('access_token', newAccessToken, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
-            maxAge: 15 * 60 * 1000, // 15 minutes
-            domain: process.env.COOKIE_DOMAIN || undefined,
-            path: '/'
-        });
+        // Generate new refresh token (15 days)
+        const newRefreshToken = jwt.sign(
+            {
+                userId: decoded.userId,
+                email: decoded.email,
+                acctId: decoded.acctId,
+                acctNo: decoded.acctNo,
+                role: decoded.role,
+                permissions: decoded.permissions
+            },
+            process.env.JWT_REFRESH_SECRET,
+            { expiresIn: '15d' }
+        );
+
+        // Set refreshed cookies
+        res.cookie('access_token', newAccessToken, getCookieConfig(6 * 60 * 60 * 1000));   // 6 hours
+        res.cookie('refresh_token', newRefreshToken, getCookieConfig(15 * 24 * 60 * 60 * 1000)); // 15 days
 
         console.log('[SSO Middleware] ✅ New access token generated and set');
         console.log('[SSO Middleware] → Proceeding to route handler with refreshed token');
@@ -190,6 +245,35 @@ export const requireAccount = async (req, res, next) => {
             message: 'Authorization error'
         });
     }
+};
+
+/**
+ * Hybrid Auth Middleware — supports both HTTP-only cookies AND Bearer token.
+ * Useful for backward compatibility with clients that send Authorization headers.
+ */
+export const hybridAuthMiddleware = async (req, res, next) => {
+    // First try Bearer token from Authorization header
+    const authHeader = req.headers['authorization'];
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.slice(7);
+        try {
+            const decoded = jwt.verify(token, process.env.JWT_SECRET);
+            req.user = {
+                userId: decoded.userId,
+                email: decoded.email,
+                acctId: decoded.acctId,
+                acctNo: decoded.acctNo,
+                role: decoded.role,
+                permissions: decoded.permissions || []
+            };
+            return next();
+        } catch (err) {
+            // Fall through to cookie-based auth
+            console.log('[Hybrid Auth] Bearer token invalid, trying cookies:', err.message);
+        }
+    }
+    // Fall back to cookie-based SSO auth
+    return ssoAuthMiddleware(req, res, next);
 };
 
 export default ssoAuthMiddleware;

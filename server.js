@@ -6,12 +6,13 @@ import mongoConnector from './config/mongoConnector.js';
 import leadRoutes from './routes/leadRoutes.js';
 import ssoRoutes from './routes/ssoRoutes.js';
 import analyticsRoutes from './routes/analyticsRoutes.js';
+import ssoAuthMiddleware from './middleware/ssoAuthMiddleware.js';
 
 // Load environment variables
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 8083;
+const PORT = process.env.PORT || 8081;
 
 // Parse allowed origins from environment variable
 const allowedOrigins = process.env.ALLOWED_ORIGINS
@@ -79,11 +80,11 @@ app.get('/login', (req, res) => {
   res.redirect(`${authServiceUrl}/login?redirect=${encodedRedirect}`);
 });
 
-// Lead Routes
-app.use('/api/leads', leadRoutes);
+// Lead Routes — protected by SSO authentication
+app.use('/api/leads', ssoAuthMiddleware, leadRoutes);
 
-// Analytics Routes
-app.use('/api/analytics', analyticsRoutes);
+// Analytics Routes — protected by SSO authentication
+app.use('/api/analytics', ssoAuthMiddleware, analyticsRoutes);
 
 // Health check route
 app.get('/health', (req, res) => {
