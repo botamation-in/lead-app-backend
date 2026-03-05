@@ -6,6 +6,7 @@ import mongoConnector from './config/mongoConnector.js';
 import leadRoutes from './routes/leadRoutes.js';
 import ssoRoutes from './routes/ssoRoutes.js';
 import analyticsRoutes from './routes/analyticsRoutes.js';
+import accountRoutes from './routes/accountRoutes.js';
 import ssoAuthMiddleware from './middleware/ssoAuthMiddleware.js';
 
 // Load environment variables
@@ -79,6 +80,11 @@ app.get('/login', (req, res) => {
   // Redirect to SSO auth service login page
   res.redirect(`${authServiceUrl}/login?redirect=${encodedRedirect}`);
 });
+
+// Account Routes — protected by SSO authentication
+// POST /api/accounts/verify
+// POST /api/accounts/link-user
+app.use('/api/accounts', accountRoutes);
 
 // Lead Routes — protected by SSO authentication
 app.use('/api/leads', ssoAuthMiddleware, leadRoutes);
