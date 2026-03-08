@@ -1,16 +1,31 @@
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
-import dotenv from 'dotenv';
 import mongoConnector from './config/mongoConnector.js';
 import leadRoutes from './routes/leadRoutes.js';
 import ssoRoutes from './routes/ssoRoutes.js';
 import analyticsRoutes from './routes/analyticsRoutes.js';
 import accountRoutes from './routes/accountRoutes.js';
 import ssoAuthMiddleware from './middleware/ssoAuthMiddleware.js';
+import { loadSecretsFromAWS } from './config/secretsManager.js';
 
-// Load environment variables
-dotenv.config();
+// AWS Secrets Manager - loads secrets into process.env
+const hasAWSCredentials = process.env.AWS_SECRET_MANAGER_ACCESS_KEY_ID &&
+  process.env.AWS_SECRET_MANAGER_SECRET_ACCESS_KEY;
+
+if (hasAWSCredentials) {
+  console.log('[Startup] Loading secrets from AWS Secrets Manager...');
+  try {
+    await loadSecretsFromAWS();
+    console.log('[Startup] ✓ Successfully loaded secrets from AWS Secrets Manager');
+  } catch (error) {
+    console.error('[Startup] ⚠ Failed to load secrets from AWS:', error.message);
+    console.error('[Startup] Continuing with environment variables only');
+    // Don't exit - allow app to continue with .env variables
+  }
+} else {
+  console.log('[Startup] AWS Secrets Manager not configured, using environment variables');
+}
 
 const app = express();
 const PORT = process.env.PORT || 8081;
