@@ -28,45 +28,17 @@ const findAdminByEmail = (admins, email) => {
  */
 export const verifyAccount = async (req, res) => {
     try {
-        // userId can come from the request body (public endpoint — no SSO required)
         const { acctNo, userId, email } = req.body;
 
         if (!acctNo) {
             return res.status(400).json({ success: false, message: 'Account Number is required' });
         }
 
-        // Call the Botamation platform API
+        // Make API call to the Botamation API
         const response = await verifyAccountServices(acctNo);
 
-        // Normalise the active field — handle '1', 1, true, 'true', 'active'
-        const isActive = response.active === '1'
-            || response.active === 1
-            || response.active === true
-            || String(response.active).toLowerCase() === 'true'
-            || String(response.active).toLowerCase() === 'active';
-
-        console.log('[verifyAccount] raw active value:', response.active, '→ isActive:', isActive);
-
-        if (isActive) {
-            // Admin email check — if email provided, verify user is an admin of this account
-            if (email) {
-                try {
-                    const admins = await getAdminsService(acctNo);
-                    const matchedAdmin = findAdminByEmail(admins, email);
-                    if (!matchedAdmin) {
-                        return res.status(403).json({
-                            success: false,
-                            emailMismatch: true,
-                            message: 'You should be an admin of the chatbot account to use this application. Please ask your account administrator for an invitation link to add yourself as admin of chatbot account.',
-                            account: { acctNo, active: true }
-                        });
-                    }
-                } catch (adminError) {
-                    console.error('[verifyAccount] Error fetching admins for email check:', adminError.message);
-                    // Don't block verification if admin API is temporarily unavailable
-                }
-            }
-
+        // Check if the account is active
+        if (response.active === '1') {
             try {
                 const accountData = {
                     acctNo,
@@ -102,7 +74,32 @@ export const verifyAccount = async (req, res) => {
                     }
                 }
 
-                // Link account to user if userId provided
+                // Check if email is an admin of the account
+                if (email) {
+                    try {
+                        const admins = await getAdminsService(acctNo);
+                        const matchedAdmin = findAdminByEmail(admins, email);
+                        if (!matchedAdmin) {
+                            return res.status(403).json({
+                                success: false,
+                                emailMismatch: true,
+                                message: 'You should be an admin of the chatbot account to use this application. Please ask your account administrator for an invitation link to add yourself as admin of chatbot account.',
+                                account: {
+                                    acctId,
+                                    acctNo,
+                                    name: accountData.accountName,
+                                    timezone: accountData.timezone,
+                                    active: true
+                                }
+                            });
+                        }
+                    } catch (adminError) {
+                        console.error('verifyAccount: Error fetching account admins:', adminError);
+                        // Don't fail the entire operation if admin check fails
+                    }
+                }
+
+                // Link account to user if userId is provided
                 let linkedUser = null;
                 if (userId && acctId) {
                     const alreadyLinked = await perfomDataExistanceCheck(UserAccount, { userId, acctId });
@@ -122,7 +119,7 @@ export const verifyAccount = async (req, res) => {
                 return res.status(200).json({
                     success: true,
                     message: linkedUser
-                        ? 'Account verified, saved successfully and linked to user'
+                        ? `Account verified, saved successfully and linked to user`
                         : 'Account verified and saved successfully',
                     account: {
                         acctId,
@@ -135,16 +132,16 @@ export const verifyAccount = async (req, res) => {
                     linkedUser
                 });
             } catch (dbError) {
-                console.error('Error processing account data:', dbError);
+                console.error("Error processing account data:", dbError);
                 return res.status(500).json({
                     success: false,
                     message: 'Account verified but failed to save to database or link to user',
                     error: dbError.message,
                     account: {
-                        acctNo,
+                        acctNo: acctNo,
                         name: response.name || 'Unknown Account',
                         timezone: response.timezone,
-                        active: isActive
+                        active: response.active === '1'
                     }
                 });
             }
@@ -154,44 +151,55 @@ export const verifyAccount = async (req, res) => {
                 success: false,
                 message: 'Account not found or inactive',
                 account: {
-                    acctNo,
+                    acctNo: acctNo,
                     name: response.name || 'Unknown Account',
-                    active: false,
-                    rawActiveValue: response.active
+                    active: false
                 }
             });
         }
     } catch (error) {
         console.error('Error verifying account:', error);
 
+        // Handle specific error cases
         if (error.response) {
             const { status } = error.response;
 
             if (status === 404) {
+                console.error('verifyAccount: 404 from Botamation API', error.response.data);
                 return res.status(404).json({
                     success: false,
-                    message: 'Account not found — Botamation API returned 404.',
-                    debug: {
-                        calledUrl: `${process.env.BOTAMATION_API_BASE_URL || 'https://app.botamation.in'}/api/super/accounts/${req.body.acctNo}`,
-                        apiKeyConfigured: !!process.env.CHATBOT_PLATFORM_API_KEY,
-                        botamationApiResponse: error.response.data
-                    },
-                    account: { acctNo: req.body.acctNo, name: null, active: false }
+                    message: 'Account not found',
+                    account: {
+                        acctNo: req.body.acctNo,
+                        name: null,
+                        active: false
+                    }
                 });
             } else if (status === 401 || status === 403) {
-                return res.status(status).json({
+                console.error('verifyAccount: Unauthorized access to Botamation API', error.response.data);
+                return res.status(error.response.status).json({
                     success: false,
-                    message: `Unauthorized — Botamation API rejected the request (${status}). Check CHATBOT_PLATFORM_API_KEY.`,
-                    account: { acctNo: req.body.acctNo, name: null, active: false }
+                    message: `Unauthorized access to ${process.env.BRAND_NAME || 'Botamation'} API`, account: {
+                        acctNo: req.body.acctNo,
+                        name: null,
+                        active: false
+                    }
                 });
             }
         }
 
+        // Fallback error response with request and error details
         return res.status(500).json({
             success: false,
             message: 'Failed to verify account',
             error: error.message,
-            account: { acctNo: req.body.acctNo, name: null, active: false }
+            requestBody: req.body,
+            stack: error.stack,
+            account: {
+                acctNo: req.body.acctNo,
+                name: null,
+                active: false
+            }
         });
     }
 };
