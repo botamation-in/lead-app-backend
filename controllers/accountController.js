@@ -7,6 +7,21 @@ import { generateAccountToken } from '../utils/tokenGenerator.js';
 import logger from '../utils/logger.js';
 
 /**
+ * Check if the given email exists in the list of account admins.
+ * Case-insensitive, trims whitespace.
+ * @param {Array} admins - List of admin objects from Botamation API
+ * @param {string} email - Email to match against
+ * @returns {Object|null} - The matching admin or null
+ */
+const findAdminByEmail = (admins, email) => {
+    if (!Array.isArray(admins) || !email) return null;
+    const normalizedEmail = email.toLowerCase().trim();
+    return admins.find(
+        admin => admin.email && admin.email.toLowerCase().trim() === normalizedEmail
+    ) || null;
+};
+
+/**
  * POST /itinerary/verifyAccount
  * Verify an account number against the Botamation platform API,
  * persist it locally, generate an API key, and optionally link to a user.
@@ -33,6 +48,25 @@ export const verifyAccount = async (req, res) => {
         console.log('[verifyAccount] raw active value:', response.active, '→ isActive:', isActive);
 
         if (isActive) {
+            // Admin email check — if email provided, verify user is an admin of this account
+            if (email) {
+                try {
+                    const admins = await getAdminsService(acctNo);
+                    const matchedAdmin = findAdminByEmail(admins, email);
+                    if (!matchedAdmin) {
+                        return res.status(403).json({
+                            success: false,
+                            emailMismatch: true,
+                            message: 'You should be an admin of the chatbot account to use this application. Please ask your account administrator for an invitation link to add yourself as admin of chatbot account.',
+                            account: { acctNo, active: true }
+                        });
+                    }
+                } catch (adminError) {
+                    console.error('[verifyAccount] Error fetching admins for email check:', adminError.message);
+                    // Don't block verification if admin API is temporarily unavailable
+                }
+            }
+
             try {
                 const accountData = {
                     acctNo,
@@ -457,18 +491,9 @@ export const deleteAccount = async (req, res) => {
 /**
  * GET /api/accounts/admins?acctNo=<acctNo>
  * Fetch admin users for an account from the Botamation platform API.
- * Returns: [{ adminId, firstName, lastName, phone, profileImage }]
+ * Returns: [{ adminId, firstName, lastName, phone, email, profileImage }]
  * @access  Protected (SSO)
  */
-// TODO: Remove mock data once Botamation /admins API is confirmed
-const MOCK_ADMINS = [
-    { adminId: 'adm001', firstName: 'Alice', lastName: 'Johnson', phone: '+1-555-0101', email: 'alice.johnson@example.com', profileImage: 'https://i.pravatar.cc/150?img=1' },
-    { adminId: 'adm002', firstName: 'Bob', lastName: 'Martinez', phone: '+1-555-0102', email: 'bob.martinez@example.com', profileImage: 'https://i.pravatar.cc/150?img=2' },
-    { adminId: 'adm003', firstName: 'Carol', lastName: 'Williams', phone: '+1-555-0103', email: 'carol.williams@example.com', profileImage: '' },
-    { adminId: 'adm004', firstName: 'David', lastName: 'Lee', phone: '+1-555-0104', email: 'david.lee@example.com', profileImage: 'https://i.pravatar.cc/150?img=4' },
-    { adminId: 'adm005', firstName: 'Evelyn', lastName: 'Brown', phone: '+1-555-0105', email: 'evelyn.brown@example.com', profileImage: '' },
-];
-
 export const getAdmins = async (req, res) => {
     try {
         const { acctNo } = req.query;
@@ -477,9 +502,7 @@ export const getAdmins = async (req, res) => {
             return res.status(400).json({ success: false, message: 'acctNo query parameter is required' });
         }
 
-        // TODO: Replace mock with live API call once endpoint is confirmed
-        // const admins = await getAdminsService(acctNo);
-        const admins = MOCK_ADMINS;
+        const admins = await getAdminsService(acctNo);
 
         const normalised = (Array.isArray(admins) ? admins : [admins]).map((a) => ({
             adminId: a.adminId ?? a.id ?? a._id ?? null,

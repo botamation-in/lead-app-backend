@@ -54,7 +54,7 @@ export const verifyAccountServices = async (acctNo) => {
 /**
  * Fetches admin users for an account from the Botamation platform API.
  *
- * Endpoint: GET https://app.botamation.in/api/super/accounts/{acctNo}/admins
+ * Endpoint: GET https://app.botamation.in/api/accounts/admins?page_id={acctNo}
  * Auth:     Header  X-ACCESS-TOKEN: <CHATBOT_PLATFORM_API_KEY>
  *
  * Expected response shape (array):
@@ -63,7 +63,7 @@ export const verifyAccountServices = async (acctNo) => {
 export const getAdminsService = async (acctNo) => {
     const apiKey = process.env.CHATBOT_PLATFORM_API_KEY;
     const baseUrl = process.env.BOTAMATION_API_BASE_URL || 'https://app.botamation.in';
-    const fullUrl = `${baseUrl}/api/super/accounts/${acctNo}/admins`;
+    const fullUrl = `${baseUrl}/api/accounts/admins?page_id=${acctNo}`;
 
     console.log('\n[AccountService] ══════════════════════════════════');
     console.log('[AccountService] Fetching admins from Botamation Platform API');
@@ -86,6 +86,7 @@ export const getAdminsService = async (acctNo) => {
         });
 
         console.log('[AccountService] ✅ Admins response status:', response.status);
+        console.log('[AccountService] ✅ Admins response data  :', JSON.stringify(response.data));
         return response.data;
     } catch (err) {
         console.error('[AccountService] ❌ Failed to fetch admins');
