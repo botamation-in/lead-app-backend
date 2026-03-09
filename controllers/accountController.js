@@ -1,4 +1,4 @@
-import { verifyAccountServices } from '../services/accountService.js';
+import { verifyAccountServices, getAdminsService } from '../services/accountService.js';
 import acctDataModel from '../models/accountModel.js';
 import accountApiKeyModel from '../models/accountApiKeyModel.js';
 import UserAccount from '../models/userAccountModel.js';
@@ -451,5 +451,49 @@ export const deleteAccount = async (req, res) => {
     } catch (error) {
         console.error('Error deleting account:', error);
         return res.status(500).json({ success: false, message: 'Internal server error', error: error.message });
+    }
+};
+
+/**
+ * GET /api/accounts/admins?acctNo=<acctNo>
+ * Fetch admin users for an account from the Botamation platform API.
+ * Returns: [{ adminId, firstName, lastName, phone, profileImage }]
+ * @access  Protected (SSO)
+ */
+// TODO: Remove mock data once Botamation /admins API is confirmed
+const MOCK_ADMINS = [
+    { adminId: 'adm001', firstName: 'Alice', lastName: 'Johnson', phone: '+1-555-0101', email: 'alice.johnson@example.com', profileImage: 'https://i.pravatar.cc/150?img=1' },
+    { adminId: 'adm002', firstName: 'Bob', lastName: 'Martinez', phone: '+1-555-0102', email: 'bob.martinez@example.com', profileImage: 'https://i.pravatar.cc/150?img=2' },
+    { adminId: 'adm003', firstName: 'Carol', lastName: 'Williams', phone: '+1-555-0103', email: 'carol.williams@example.com', profileImage: '' },
+    { adminId: 'adm004', firstName: 'David', lastName: 'Lee', phone: '+1-555-0104', email: 'david.lee@example.com', profileImage: 'https://i.pravatar.cc/150?img=4' },
+    { adminId: 'adm005', firstName: 'Evelyn', lastName: 'Brown', phone: '+1-555-0105', email: 'evelyn.brown@example.com', profileImage: '' },
+];
+
+export const getAdmins = async (req, res) => {
+    try {
+        const { acctNo } = req.query;
+
+        if (!acctNo) {
+            return res.status(400).json({ success: false, message: 'acctNo query parameter is required' });
+        }
+
+        // TODO: Replace mock with live API call once endpoint is confirmed
+        // const admins = await getAdminsService(acctNo);
+        const admins = MOCK_ADMINS;
+
+        const normalised = (Array.isArray(admins) ? admins : [admins]).map((a) => ({
+            adminId: a.adminId ?? a.id ?? a._id ?? null,
+            firstName: a.firstName ?? a.first_name ?? null,
+            lastName: a.lastName ?? a.last_name ?? null,
+            phone: a.phone ?? a.mobile ?? null,
+            email: a.email ?? null,
+            profileImage: a.profileImage ?? a.profile_image ?? a.profileImageUrl ?? null
+        }));
+
+        return res.status(200).json({ success: true, admins: normalised });
+    } catch (error) {
+        logger.error('Failed to fetch admins', { error: error.message });
+        const status = error.response?.status || 500;
+        return res.status(status).json({ success: false, message: 'Failed to fetch admins', error: error.message });
     }
 };

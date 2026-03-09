@@ -50,3 +50,47 @@ export const verifyAccountServices = async (acctNo) => {
         throw err;
     }
 };
+
+/**
+ * Fetches admin users for an account from the Botamation platform API.
+ *
+ * Endpoint: GET https://app.botamation.in/api/super/accounts/{acctNo}/admins
+ * Auth:     Header  X-ACCESS-TOKEN: <CHATBOT_PLATFORM_API_KEY>
+ *
+ * Expected response shape (array):
+ * [{ adminId, firstName, lastName, phone, profileImage }, ...]
+ */
+export const getAdminsService = async (acctNo) => {
+    const apiKey = process.env.CHATBOT_PLATFORM_API_KEY;
+    const baseUrl = process.env.BOTAMATION_API_BASE_URL || 'https://app.botamation.in';
+    const fullUrl = `${baseUrl}/api/super/accounts/${acctNo}/admins`;
+
+    console.log('\n[AccountService] ══════════════════════════════════');
+    console.log('[AccountService] Fetching admins from Botamation Platform API');
+    console.log('[AccountService] URL    :', fullUrl);
+    console.log('[AccountService] API Key:', apiKey ? `${apiKey.slice(0, 6)}…` : '❌ NOT SET (CHATBOT_PLATFORM_API_KEY missing)');
+    console.log('[AccountService] ══════════════════════════════════');
+
+    if (!apiKey) {
+        throw new Error('CHATBOT_PLATFORM_API_KEY is not configured in environment variables');
+    }
+
+    try {
+        const response = await axios.get(fullUrl, {
+            headers: {
+                'X-ACCESS-TOKEN': apiKey,
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            timeout: 10000
+        });
+
+        console.log('[AccountService] ✅ Admins response status:', response.status);
+        return response.data;
+    } catch (err) {
+        console.error('[AccountService] ❌ Failed to fetch admins');
+        console.error('[AccountService] Status :', err.response?.status);
+        console.error('[AccountService] Body   :', JSON.stringify(err.response?.data));
+        throw err;
+    }
+};

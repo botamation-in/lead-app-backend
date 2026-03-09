@@ -1,6 +1,6 @@
 import express from 'express';
 import ssoAuthMiddleware from '../middleware/ssoAuthMiddleware.js';
-import { verifyAccount, accountLinkToUser, accountName, getAccountToken, regenerateAccountToken, deleteAccount } from '../controllers/accountController.js';
+import { verifyAccount, accountLinkToUser, accountName, getAccountToken, regenerateAccountToken, deleteAccount, getAdmins } from '../controllers/accountController.js';
 
 const router = express.Router();
 
@@ -41,6 +41,14 @@ router.post('/token', ssoAuthMiddleware, getAccountToken);
  * Regenerate the API key for an account.
  */
 router.post('/token/regenerate', ssoAuthMiddleware, regenerateAccountToken);
+
+/**
+ * GET /api/accounts/admins?acctNo=<acctNo>
+ * Fetch admin users for an account from the Botamation platform API.
+ * Returns: [{ adminId, firstName, lastName, phone, profileImage }]
+ * @access  Protected (SSO)
+ */
+router.get('/admins', ssoAuthMiddleware, getAdmins);
 
 /**
  * DELETE /api/accounts/:acctId/user/:userId
