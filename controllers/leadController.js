@@ -20,8 +20,8 @@ class LeadController {
 
       return res.status(201).json({
         success: true,
-        message: Array.isArray(leadData) 
-          ? `${result.length} leads created successfully` 
+        message: Array.isArray(leadData)
+          ? `${result.length} leads created successfully`
           : 'Lead created successfully',
         data: result
       });
@@ -40,15 +40,21 @@ class LeadController {
    */
   async getAllLeads(req, res) {
     try {
-      const { page, limit, sortBy, sortOrder, status, search } = req.query;
+      const { page, limit, sortBy, sortOrder, status, search, acctNo, trainerName, memberName, email } = req.query;
+
+      const sortOrderVal = sortOrder === 'asc' ? 1 : sortOrder === 'desc' ? -1 : (sortOrder ? parseInt(sortOrder) : -1);
 
       const filters = {
         page: page ? parseInt(page) : 1,
         limit: limit ? parseInt(limit) : 10,
         sortBy: sortBy || 'createdAt',
-        sortOrder: sortOrder ? parseInt(sortOrder) : -1,
+        sortOrder: sortOrderVal,
         status,
-        search
+        search,
+        acctNo,
+        trainerName,
+        memberName,
+        email
       };
 
       const result = await leadService.getAllLeads(filters);

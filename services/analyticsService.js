@@ -1,4 +1,5 @@
 import Lead from '../models/leadModel.js';
+import { performAggregate } from '../config/mongoConnector.js';
 
 class AnalyticsService {
     /**
@@ -12,39 +13,26 @@ class AnalyticsService {
      */
     async getChartData({ xAxis, yAxis, aggregation, dateFilter }) {
         try {
-            // Build aggregation pipeline
             const pipeline = [];
 
             // Stage 1: Filter by date if provided
             if (dateFilter && (dateFilter.from || dateFilter.to)) {
                 const dateMatch = {};
-                if (dateFilter.from) {
-                    dateMatch.$gte = dateFilter.from;
-                }
-                if (dateFilter.to) {
-                    dateMatch.$lte = dateFilter.to;
-                }
-                pipeline.push({
-                    $match: {
-                        updatedAt: dateMatch
-                    }
-                });
+                if (dateFilter.from) dateMatch.$gte = dateFilter.from;
+                if (dateFilter.to) dateMatch.$lte = dateFilter.to;
+                pipeline.push({ $match: { updatedAt: dateMatch } });
             }
 
             // Stage 2: Group by xAxis and aggregate yAxis
-            const groupStage = {
-                _id: `$${xAxis}`,
-                value: this._getAggregationExpression(aggregation, yAxis)
-            };
-
             pipeline.push({
-                $group: groupStage
+                $group: {
+                    _id: `$${xAxis}`,
+                    value: this._getAggregationExpression(aggregation, yAxis)
+                }
             });
 
             // Stage 3: Sort by _id for consistent results
-            pipeline.push({
-                $sort: { _id: 1 }
-            });
+            pipeline.push({ $sort: { _id: 1 } });
 
             // Stage 4: Project to format the output
             pipeline.push({
@@ -55,9 +43,7 @@ class AnalyticsService {
                 }
             });
 
-            const result = await Lead.aggregate(pipeline);
-
-            return result;
+            return await performAggregate(Lead, pipeline);
         } catch (error) {
             console.error('Error in getChartData:', error);
             throw new Error(`Failed to retrieve chart data: ${error.message}`);

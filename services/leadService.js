@@ -1,4 +1,10 @@
 import Lead from '../models/leadModel.js';
+import {
+  performUpsert,
+  performGet,
+  performDelete,
+  performCount
+} from '../config/mongoConnector.js';
 
 class LeadService {
   /**
@@ -7,12 +13,13 @@ class LeadService {
   async createLead(leadData) {
     try {
       if (Array.isArray(leadData)) {
-        const leads = await Lead.insertMany(leadData);
-        return leads;
+        const results = await Promise.all(
+          leadData.map(item => performUpsert(Lead, {}, item))
+        );
+        return results.map(r => r.doc || { _id: r.upsertedId });
       } else {
-        const lead = new Lead(leadData);
-        await lead.save();
-        return lead;
+        const result = await performUpsert(Lead, {}, leadData);
+        return result.doc || { _id: result.upsertedId };
       }
     } catch (error) {
       console.error('Error creating lead:', error);
@@ -25,16 +32,26 @@ class LeadService {
    */
   async getAllLeads(filters = {}) {
     try {
-      const { page = 1, limit = 10, sortBy = 'createdAt', sortOrder = -1, status, search } = filters;
+      const {
+        page = 1,
+        limit = 10,
+        sortBy = 'createdAt',
+        sortOrder = -1,
+        status,
+        search,
+        trainerName,
+        memberName,
+        email
+      } = filters;
 
       const query = {};
 
-      // Status filter
-      if (status) {
-        query.status = status;
-      }
+      if (status) query.status = status;
 
-      // Search filter
+      if (trainerName) query.trainerName = { $regex: trainerName, $options: 'i' };
+      if (memberName) query.memberName = { $regex: memberName, $options: 'i' };
+      if (email) query.email = { $regex: email, $options: 'i' };
+
       if (search) {
         query.$or = [
           { trainerName: { $regex: search, $options: 'i' } },
@@ -46,15 +63,13 @@ class LeadService {
       const skip = (page - 1) * limit;
       const sort = { [sortBy]: sortOrder };
 
-      const leads = await Lead.find(query)
-        .sort(sort)
-        .skip(skip)
-        .limit(limit);
-
-      const total = await Lead.countDocuments(query);
+      const [getResult, total] = await Promise.all([
+        performGet(Lead, query, [], { sort, skip, limit }),
+        performCount(Lead, query)
+      ]);
 
       return {
-        data: leads,
+        data: getResult.data,
         pagination: {
           total,
           page,
@@ -73,8 +88,8 @@ class LeadService {
    */
   async updateLead(id, updateData) {
     try {
-      const lead = await Lead.findByIdAndUpdate(id, updateData, { new: true });
-      return lead;
+      const result = await performUpsert(Lead, { _id: id }, updateData);
+      return result.doc || null;
     } catch (error) {
       console.error('Error updating lead:', error);
       throw new Error(`Failed to update lead: ${error.message}`);
@@ -86,7 +101,7 @@ class LeadService {
    */
   async deleteLead(id) {
     try {
-      await Lead.findByIdAndDelete(id);
+      await performDelete(Lead, { _id: id });
       return true;
     } catch (error) {
       console.error('Error deleting lead:', error);

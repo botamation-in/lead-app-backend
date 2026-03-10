@@ -2,7 +2,8 @@ import { verifyAccountServices, getAdminsService } from '../services/accountServ
 import acctDataModel from '../models/accountModel.js';
 import accountApiKeyModel from '../models/accountApiKeyModel.js';
 import UserAccount from '../models/userAccountModel.js';
-import { performUpsert, performGet, perfomDataExistanceCheck } from '../utils/dbHelpers.js';
+import AccountAdmin from '../models/accountAdminModel.js';
+import { performUpsert, performGet, perfomDataExistanceCheck, performDelete, performCount } from '../config/mongoConnector.js';
 import { generateAccountToken } from '../utils/tokenGenerator.js';
 import logger from '../utils/logger.js';
 
@@ -78,6 +79,24 @@ export const verifyAccount = async (req, res) => {
                 if (email) {
                     try {
                         const admins = await getAdminsService(acctNo);
+                        const normalised = (Array.isArray(admins) ? admins : [admins]).map((a) => ({
+                            adminId: a.adminId ?? a.id ?? a._id ?? null,
+                            firstName: a.firstName ?? a.first_name ?? null,
+                            lastName: a.lastName ?? a.last_name ?? null,
+                            phone: a.phone ?? a.mobile ?? null,
+                            email: a.email ?? null,
+                            profileImage: a.profileImage ?? a.profile_image ?? a.profileImageUrl ?? null
+                        }));
+                        // Persist admins to the local database
+                        await Promise.all(
+                            normalised.map((admin) => {
+                                const filter = admin.adminId
+                                    ? { acctNo, adminId: admin.adminId }
+                                    : { acctNo, email: admin.email };
+                                return performUpsert(AccountAdmin, filter, { ...admin, acctNo });
+                            })
+                        );
+                        logger.info('Admins synced to database during account verification', { acctNo, count: normalised.length });
                         const matchedAdmin = findAdminByEmail(admins, email);
                         if (!matchedAdmin) {
                             return res.status(403).json({
@@ -462,27 +481,27 @@ export const deleteAccount = async (req, res) => {
         }
 
         // Verify the account exists
-        const account = await acctDataModel.findById(acctId).lean();
-        if (!account) {
+        const accountResult = await performGet(acctDataModel, { _id: acctId });
+        if (!accountResult?.success || !accountResult.data?.length) {
             return res.status(404).json({ success: false, message: 'Account not found' });
         }
 
         // Verify the user is actually linked to this account
-        const userLink = await UserAccount.findOne({ acctId, userId }).lean();
-        if (!userLink) {
+        const userLinkResult = await performGet(UserAccount, { acctId, userId });
+        if (!userLinkResult?.success || !userLinkResult.data?.length) {
             return res.status(404).json({ success: false, message: 'User is not linked to this account' });
         }
 
         // Delete UserAccount link
-        await UserAccount.deleteMany({ acctId, userId });
+        await performDelete(UserAccount, { acctId, userId });
         logger.info('UserAccount link deleted', { acctId, userId, operation: 'deleteUserAccount' });
 
         // Delete API keys for this account
-        await accountApiKeyModel.deleteMany({ acctId });
+        await performDelete(accountApiKeyModel, { acctId });
         logger.info('AccountApiKey deleted', { acctId, operation: 'deleteAccountApiKey' });
 
         // Delete the account itself
-        await acctDataModel.findByIdAndDelete(acctId);
+        await performDelete(acctDataModel, { _id: acctId });
         logger.info('Account deleted', { acctId, userId, operation: 'deleteAccount' });
 
         return res.status(200).json({
@@ -493,6 +512,57 @@ export const deleteAccount = async (req, res) => {
     } catch (error) {
         console.error('Error deleting account:', error);
         return res.status(500).json({ success: false, message: 'Internal server error', error: error.message });
+    }
+};
+
+/**
+ * GET /api/accounts/admins/list?acctNo=<acctNo>
+ * Return admins for an account from the local database.
+ * @access  Protected (SSO)
+ */
+export const getAdminsFromDb = async (req, res) => {
+    try {
+        const { acctNo, page, limit, sortBy, sortOrder, firstName, lastName, email, phone } = req.query;
+
+        if (!acctNo) {
+            return res.status(400).json({ success: false, message: 'acctNo query parameter is required' });
+        }
+
+        const query = { acctNo };
+
+        if (firstName) query.firstName = { $regex: firstName, $options: 'i' };
+        if (lastName) query.lastName = { $regex: lastName, $options: 'i' };
+        if (email) query.email = { $regex: email, $options: 'i' };
+        if (phone) query.phone = { $regex: phone, $options: 'i' };
+
+        const pageNum = Math.max(1, parseInt(page) || 1);
+        const limitNum = Math.max(1, parseInt(limit) || 20);
+        const skip = (pageNum - 1) * limitNum;
+
+        const sortField = sortBy || 'createdAt';
+        const sortDir = sortOrder === 'asc' ? 1 : sortOrder === 'desc' ? -1 : -1;
+        const sort = { [sortField]: sortDir };
+
+        const [adminsResult, total] = await Promise.all([
+            performGet(AccountAdmin, query, [], { sort, skip: skip, limit: limitNum }),
+            performCount(AccountAdmin, query)
+        ]);
+
+        const admins = adminsResult.data;
+
+        return res.status(200).json({
+            success: true,
+            admins,
+            pagination: {
+                total,
+                page: pageNum,
+                limit: limitNum,
+                pages: Math.ceil(total / limitNum)
+            }
+        });
+    } catch (error) {
+        logger.error('Failed to fetch admins from database', { error: error.message });
+        return res.status(500).json({ success: false, message: 'Failed to fetch admins from database', error: error.message });
     }
 };
 
@@ -520,6 +590,33 @@ export const getAdmins = async (req, res) => {
             email: a.email ?? null,
             profileImage: a.profileImage ?? a.profile_image ?? a.profileImageUrl ?? null
         }));
+
+        // Upsert each admin returned by Botamation
+        await Promise.all(
+            normalised.map((admin) => {
+                const filter = admin.adminId
+                    ? { acctNo, adminId: admin.adminId }
+                    : { acctNo, email: admin.email };
+                return performUpsert(AccountAdmin, filter, { ...admin, acctNo });
+            })
+        );
+
+        // Remove admins that are no longer in the Botamation response
+        const activeAdminIds = normalised.map((a) => a.adminId).filter(Boolean);
+        const activeEmails = normalised.map((a) => a.email).filter(Boolean);
+        const deleteResult = await performDelete(AccountAdmin, {
+            acctNo,
+            $nor: [
+                { adminId: { $in: activeAdminIds } },
+                { email: { $in: activeEmails } }
+            ]
+        });
+
+        logger.info('Admins synced to database', {
+            acctNo,
+            upserted: normalised.length,
+            removed: deleteResult.deletedCount
+        });
 
         return res.status(200).json({ success: true, admins: normalised });
     } catch (error) {
