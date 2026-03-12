@@ -26,11 +26,13 @@ router.post('/login', (req, res) => {
         if (useMockAuth) {
             // Use built-in mock auth - redirect includes final destination
             const encodedRedirect = encodeURIComponent(finalRedirectUrl);
-            actualAuthUrl = `http://localhost:${process.env.PORT || 8083}/api/auth/mock-auth-login?redirect=${encodedRedirect}`;
+            const backendBaseUrl = process.env.BACKEND_BASE_URL || `http://localhost:${process.env.PORT || 8083}`;
+            actualAuthUrl = `${backendBaseUrl}/api/auth/mock-auth-login?redirect=${encodedRedirect}`;
         } else {
             // Use real external auth service - auth service must redirect to OUR callback
             // The callback URL includes the final frontend redirect as a parameter
-            const callbackUrl = `http://localhost:${process.env.PORT || 8083}/api/auth/callback?redirect=${encodeURIComponent(finalRedirectUrl)}`;
+            const backendBaseUrl = process.env.BACKEND_BASE_URL || `http://localhost:${process.env.PORT || 8083}`;
+            const callbackUrl = `${backendBaseUrl}/api/auth/callback?redirect=${encodeURIComponent(finalRedirectUrl)}`;
             const encodedCallbackUrl = encodeURIComponent(callbackUrl);
             actualAuthUrl = `${authFrontendUrl}/login?redirect=${encodedCallbackUrl}`;
         }
