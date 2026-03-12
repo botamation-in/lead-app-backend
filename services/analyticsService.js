@@ -11,17 +11,22 @@ class AnalyticsService {
      * @param {Object} params.dateFilter - Optional date range filter { from: Date, to: Date }
      * @returns {Promise<Array>} - Aggregated chart data
      */
-    async getChartData({ xAxis, yAxis, aggregation, dateFilter }) {
+    async getChartData({ xAxis, yAxis, aggregation, dateFilter, acctId }) {
         try {
             const pipeline = [];
 
-            // Stage 1: Filter by date if provided
+            // Stage 1: Always filter by acctId
+            const matchStage = { acctId };
+
+            // Stage 2: Filter by date if provided
             if (dateFilter && (dateFilter.from || dateFilter.to)) {
                 const dateMatch = {};
                 if (dateFilter.from) dateMatch.$gte = dateFilter.from;
                 if (dateFilter.to) dateMatch.$lte = dateFilter.to;
-                pipeline.push({ $match: { updatedAt: dateMatch } });
+                matchStage.createdAt = dateMatch;
             }
+
+            pipeline.push({ $match: matchStage });
 
             // Stage 2: Group by xAxis and aggregate yAxis
             pipeline.push({

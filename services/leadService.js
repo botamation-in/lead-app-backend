@@ -10,16 +10,16 @@ class LeadService {
   /**
    * Create new lead(s)
    */
-  async createLead(leadData) {
+  async createLead(leadData, acctId) {
     try {
       if (Array.isArray(leadData)) {
         const results = await Promise.all(
-          leadData.map(item => performUpsert(Lead, {}, item))
+          leadData.map(item => performUpsert(Lead, {}, { ...item, acctId }))
         );
-        return results.map(r => r.doc || { _id: r.upsertedId });
+        return results.map(r => r.doc);
       } else {
-        const result = await performUpsert(Lead, {}, leadData);
-        return result.doc || { _id: result.upsertedId };
+        const result = await performUpsert(Lead, {}, { ...leadData, acctId });
+        return result.doc;
       }
     } catch (error) {
       console.error('Error creating lead:', error);
@@ -39,12 +39,13 @@ class LeadService {
         sortOrder = -1,
         status,
         search,
+        acctId,
         trainerName,
         memberName,
         email
       } = filters;
 
-      const query = {};
+      const query = { acctId };
 
       if (status) query.status = status;
 

@@ -16,7 +16,15 @@ class LeadController {
         });
       }
 
-      const result = await leadService.createLead(leadData);
+      const acctId = req.headers['x-page-acctid'] || req.query.acctId;
+      if (!acctId) {
+        return res.status(400).json({
+          success: false,
+          message: 'acctId is required (header: x-page-acctId or query param: acctId)'
+        });
+      }
+
+      const result = await leadService.createLead(leadData, acctId);
 
       return res.status(201).json({
         success: true,
@@ -27,7 +35,7 @@ class LeadController {
       });
     } catch (error) {
       console.error('Error in createLead:', error);
-      return res.status(400).json({
+      return res.status(error.statusCode || 400).json({
         success: false,
         message: error.message
       });
@@ -40,7 +48,15 @@ class LeadController {
    */
   async getAllLeads(req, res) {
     try {
-      const { page, limit, sortBy, sortOrder, status, search, acctNo, trainerName, memberName, email } = req.query;
+      const { page, limit, sortBy, sortOrder, status, search, trainerName, memberName, email, acctId: acctIdQuery } = req.query;
+
+      const acctId = req.headers['x-page-acctid'] || acctIdQuery;
+      if (!acctId) {
+        return res.status(400).json({
+          success: false,
+          message: 'acctId is required (header: x-page-acctId or query param: acctId)'
+        });
+      }
 
       const sortOrderVal = sortOrder === 'asc' ? 1 : sortOrder === 'desc' ? -1 : (sortOrder ? parseInt(sortOrder) : -1);
 
@@ -51,7 +67,7 @@ class LeadController {
         sortOrder: sortOrderVal,
         status,
         search,
-        acctNo,
+        acctId,
         trainerName,
         memberName,
         email
@@ -66,7 +82,7 @@ class LeadController {
       });
     } catch (error) {
       console.error('Error in getAllLeads:', error);
-      return res.status(500).json({
+      return res.status(error.statusCode || 500).json({
         success: false,
         message: error.message
       });

@@ -28,6 +28,12 @@ const leadSchema = new mongoose.Schema(
     },
     notes: {
       type: String
+    },
+    acctId: {
+      type: String,
+      ref: 'Account',
+      required: true,
+      index: true
     }
   },
   {

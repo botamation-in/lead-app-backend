@@ -7,13 +7,20 @@ class AnalyticsController {
    */
   async getChartData(req, res) {
     try {
-      const { xAxis, yAxis, aggregation, fromDate, toDate } = req.query;
+      const { xAxis, yAxis, aggregation, dateFrom, dateTo, acctId } = req.query;
 
       // Validation
       if (!xAxis || !yAxis || !aggregation) {
         return res.status(400).json({
           success: false,
           message: 'xAxis, yAxis, and aggregation are required parameters'
+        });
+      }
+
+      if (!acctId) {
+        return res.status(400).json({
+          success: false,
+          message: 'acctId is required'
         });
       }
 
@@ -28,9 +35,9 @@ class AnalyticsController {
 
       // Parse and validate dates if provided
       let dateFilter = null;
-      if (fromDate || toDate) {
-        const from = fromDate ? new Date(fromDate) : null;
-        const to = toDate ? new Date(toDate) : null;
+      if (dateFrom || dateTo) {
+        const from = dateFrom ? new Date(dateFrom) : null;
+        const to = dateTo ? new Date(new Date(dateTo).setHours(23, 59, 59, 999)) : null;
 
         if ((from && isNaN(from.getTime())) || (to && isNaN(to.getTime()))) {
           return res.status(400).json({
@@ -46,7 +53,8 @@ class AnalyticsController {
         xAxis,
         yAxis,
         aggregation,
-        dateFilter
+        dateFilter,
+        acctId
       });
 
       return res.status(200).json({
@@ -56,7 +64,7 @@ class AnalyticsController {
       });
     } catch (error) {
       console.error('Error in getChartData:', error);
-      return res.status(500).json({
+      return res.status(error.statusCode || 500).json({
         success: false,
         message: 'Error retrieving chart data',
         error: error.message

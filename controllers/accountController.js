@@ -522,11 +522,17 @@ export const deleteAccount = async (req, res) => {
  */
 export const getAdminsFromDb = async (req, res) => {
     try {
-        const { acctNo, page, limit, sortBy, sortOrder, firstName, lastName, email, phone } = req.query;
+        const { acctId, page, limit, sortBy, sortOrder, firstName, lastName, email, phone } = req.query;
 
-        if (!acctNo) {
-            return res.status(400).json({ success: false, message: 'acctNo query parameter is required' });
+        if (!acctId) {
+            return res.status(400).json({ success: false, message: 'acctId query parameter is required' });
         }
+
+        const acctRecord = await perfomDataExistanceCheck(acctDataModel, { _id: acctId });
+        if (!acctRecord) {
+            return res.status(404).json({ success: false, message: 'Account not found' });
+        }
+        const acctNo = acctRecord.acctNo;
 
         const query = { acctNo };
 
@@ -574,11 +580,17 @@ export const getAdminsFromDb = async (req, res) => {
  */
 export const getAdmins = async (req, res) => {
     try {
-        const { acctNo } = req.query;
+        const { acctId } = req.query;
 
-        if (!acctNo) {
-            return res.status(400).json({ success: false, message: 'acctNo query parameter is required' });
+        if (!acctId) {
+            return res.status(400).json({ success: false, message: 'acctId query parameter is required' });
         }
+
+        const acctRecord = await perfomDataExistanceCheck(acctDataModel, { _id: acctId });
+        if (!acctRecord) {
+            return res.status(404).json({ success: false, message: 'Account not found' });
+        }
+        const acctNo = acctRecord.acctNo;
 
         const admins = await getAdminsService(acctNo);
 
