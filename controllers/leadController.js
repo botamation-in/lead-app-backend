@@ -16,15 +16,15 @@ class LeadController {
         });
       }
 
-      const acctId = req.headers['x-page-acctid'] || req.query.acctId;
-      if (!acctId) {
+      const acctNo = req.headers['x-acctno'] || req.query.acctNo;
+      if (!acctNo) {
         return res.status(400).json({
           success: false,
-          message: 'acctId is required (header: x-page-acctId or query param: acctId)'
+          message: 'acctNo is required (header: x-acctNo or query param: acctNo)'
         });
       }
 
-      const result = await leadService.createLead(leadData, acctId);
+      const result = await leadService.createLead(leadData, acctNo);
 
       return res.status(201).json({
         success: true,
@@ -48,13 +48,13 @@ class LeadController {
    */
   async getAllLeads(req, res) {
     try {
-      const { page, limit, sortBy, sortOrder, status, search, trainerName, memberName, email, acctId: acctIdQuery } = req.query;
+      const { page, limit, sortBy, sortOrder, search, acctId: acctIdQuery, ...rest } = req.query;
 
-      const acctId = req.headers['x-page-acctid'] || acctIdQuery;
+      const acctId = req.headers['x-acctno'] || acctIdQuery;
       if (!acctId) {
         return res.status(400).json({
           success: false,
-          message: 'acctId is required (header: x-page-acctId or query param: acctId)'
+          message: 'acctId is required (header: x-acctNo or query param: acctId)'
         });
       }
 
@@ -65,12 +65,9 @@ class LeadController {
         limit: limit ? parseInt(limit) : 10,
         sortBy: sortBy || 'createdAt',
         sortOrder: sortOrderVal,
-        status,
         search,
         acctId,
-        trainerName,
-        memberName,
-        email
+        ...rest
       };
 
       const result = await leadService.getAllLeads(filters);

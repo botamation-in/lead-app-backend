@@ -32,7 +32,7 @@ const userAccountSchema = new mongoose.Schema(
             default: 0
         }
     },
-    { timestamps: true }
+    { timestamps: true, collection: 'user_account_rel' }
 );
 
 const UserAccount = mongoose.model('UserAccount', userAccountSchema);

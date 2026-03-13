@@ -1,11 +1,7 @@
 import express from 'express';
 import analyticsController from '../controllers/analyticsController.js';
-import ssoAuthMiddleware from '../middleware/ssoAuthMiddleware.js';
 
 const router = express.Router();
-
-// Apply SSO authentication to all analytics routes
-router.use(ssoAuthMiddleware);
 
 /**
  * API: GET /api/analytics/chart-data

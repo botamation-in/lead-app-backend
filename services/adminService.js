@@ -1,0 +1,103 @@
+import { getAdminsService } from './accountService.js';
+import acctDataModel from '../models/accountModel.js';
+import AccountAdmin from '../models/accountAdminModel.js';
+import { performUpsert, performGet, performDelete, performCount, perfomDataExistanceCheck } from '../config/mongoConnector.js';
+import logger from '../utils/logger.js';
+
+/**
+ * Resolve acctNo from acctId.
+ * Throws if account not found.
+ */
+const resolveAcctNo = async (acctId) => {
+    const acctRecord = await perfomDataExistanceCheck(acctDataModel, { _id: acctId });
+    if (!acctRecord) {
+        const err = new Error('Account not found');
+        err.statusCode = 404;
+        throw err;
+    }
+    return acctRecord.acctNo;
+};
+
+/**
+ * Fetch admins from the Botamation platform, sync to local DB, and return normalised list.
+ */
+export const syncAdminsFromPlatform = async (acctId) => {
+    const acctNo = await resolveAcctNo(acctId);
+
+    const admins = await getAdminsService(acctNo);
+
+    const normalised = (Array.isArray(admins) ? admins : [admins]).map((a) => ({
+        adminId: a.adminId ?? a.id ?? a._id ?? null,
+        firstName: a.firstName ?? a.first_name ?? null,
+        lastName: a.lastName ?? a.last_name ?? null,
+        phone: a.phone ?? a.mobile ?? null,
+        email: a.email ?? null,
+        profileImage: a.profileImage ?? a.profile_image ?? a.profileImageUrl ?? null
+    }));
+
+    // Upsert each admin returned by Botamation
+    await Promise.all(
+        normalised.map((admin) => {
+            const filter = admin.adminId
+                ? { acctNo, adminId: admin.adminId }
+                : { acctNo, email: admin.email };
+            return performUpsert(AccountAdmin, filter, { ...admin, acctNo });
+        })
+    );
+
+    // Remove admins no longer in the Botamation response
+    const activeAdminIds = normalised.map((a) => a.adminId).filter(Boolean);
+    const activeEmails = normalised.map((a) => a.email).filter(Boolean);
+    const deleteResult = await performDelete(AccountAdmin, {
+        acctNo,
+        $nor: [
+            { adminId: { $in: activeAdminIds } },
+            { email: { $in: activeEmails } }
+        ]
+    });
+
+    logger.info('Admins synced to database', {
+        acctNo,
+        upserted: normalised.length,
+        removed: deleteResult.deletedCount
+    });
+
+    return normalised;
+};
+
+/**
+ * Fetch admins for an account from the local DB with optional filtering and pagination.
+ */
+export const getAdminsFromDb = async (acctId, { page, limit, sortBy, sortOrder, firstName, lastName, email, phone } = {}) => {
+    const acctNo = await resolveAcctNo(acctId);
+
+    const query = { acctNo };
+
+    if (firstName) query.firstName = { $regex: firstName, $options: 'i' };
+    if (lastName) query.lastName = { $regex: lastName, $options: 'i' };
+    if (email) query.email = { $regex: email, $options: 'i' };
+    if (phone) query.phone = { $regex: phone, $options: 'i' };
+
+    const pageNum = Math.max(1, parseInt(page) || 1);
+    const limitNum = Math.max(1, parseInt(limit) || 20);
+    const skip = (pageNum - 1) * limitNum;
+
+    const sortField = sortBy || 'createdAt';
+    const sortDir = sortOrder === 'asc' ? 1 : -1;
+    const sort = { [sortField]: sortDir };
+
+    const [adminsResult, total] = await Promise.all([
+        performGet(AccountAdmin, query, [], { sort, skip, limit: limitNum }),
+        performCount(AccountAdmin, query)
+    ]);
+
+    return {
+        admins: adminsResult.data,
+        pagination: {
+            total,
+            page: pageNum,
+            limit: limitNum,
+            pages: Math.ceil(total / limitNum)
+        }
+    };
+};

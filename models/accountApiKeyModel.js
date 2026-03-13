@@ -14,13 +14,9 @@ const accountApiKeySchema = new mongoose.Schema(
         apiKey: {
             type: String,
             required: true
-        },
-        name: {
-            type: String,
-            default: 'Default API Key'
         }
     },
-    { timestamps: true }
+    { timestamps: true, collection: 'accountApiKey' }
 );
 
 const accountApiKeyModel = mongoose.model('AccountApiKey', accountApiKeySchema);

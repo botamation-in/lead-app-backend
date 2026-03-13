@@ -6,7 +6,9 @@ import leadRoutes from './routes/leadRoutes.js';
 import ssoRoutes from './routes/ssoRoutes.js';
 import analyticsRoutes from './routes/analyticsRoutes.js';
 import accountRoutes from './routes/accountRoutes.js';
+import adminRoutes from './routes/adminRoutes.js';
 import ssoAuthMiddleware from './middleware/ssoAuthMiddleware.js';
+import { apiKeyAuthMiddleware } from './middleware/apiKeyAuthMiddleware.js';
 import { loadSecretsFromAWS } from './config/secretsManager.js';
 
 // AWS Secrets Manager - loads secrets into process.env
@@ -96,16 +98,15 @@ app.get('/login', (req, res) => {
   res.redirect(`${authServiceUrl}/login?redirect=${encodedRedirect}`);
 });
 
-// Account Routes — protected by SSO authentication
-// POST /api/accounts/verify
-// POST /api/accounts/link-user
-app.use('/api/accounts', accountRoutes);
+app.use('/api/ui/accounts', ssoAuthMiddleware, accountRoutes);
 
-// Lead Routes — protected by SSO authentication
-app.use('/api/leads', ssoAuthMiddleware, leadRoutes);
+// Admin Routes — SSO required
+app.use('/api/ui/admins', ssoAuthMiddleware, adminRoutes);
 
-// Analytics Routes — protected by SSO authentication
-app.use('/api/analytics', ssoAuthMiddleware, analyticsRoutes);
+app.use('/api/leads', leadRoutes);
+app.use('/api/ui/leads', ssoAuthMiddleware, leadRoutes);
+
+app.use('/api/ui/analytics', ssoAuthMiddleware, analyticsRoutes);
 
 // Health check route
 app.get('/health', (req, res) => {

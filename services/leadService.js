@@ -1,17 +1,32 @@
 import Lead from '../models/leadModel.js';
+import Account from '../models/accountModel.js';
+import AccountAdmin from '../models/accountAdminModel.js';
+import UserAccount from '../models/userAccountModel.js';
+import mongoose from 'mongoose';
 import {
   performUpsert,
   performGet,
   performDelete,
-  performCount
+  performCount,
+  perfomDataExistanceCheck
 } from '../config/mongoConnector.js';
 
 class LeadService {
   /**
    * Create new lead(s)
+   * Resolves acctNo → acctId via Account collection before saving
    */
-  async createLead(leadData, acctId) {
+  async createLead(leadData, acctNo) {
     try {
+      // Resolve acctId from acctNo
+      const account = await perfomDataExistanceCheck(Account, { acctNo });
+      if (!account) {
+        const err = new Error(`Account not found for acctNo: ${acctNo}`);
+        err.statusCode = 404;
+        throw err;
+      }
+      const acctId = account._id;
+
       if (Array.isArray(leadData)) {
         const results = await Promise.all(
           leadData.map(item => performUpsert(Lead, {}, { ...item, acctId }))
@@ -23,7 +38,7 @@ class LeadService {
       }
     } catch (error) {
       console.error('Error creating lead:', error);
-      throw new Error(`Failed to create lead: ${error.message}`);
+      throw error.statusCode ? error : new Error(`Failed to create lead: ${error.message}`);
     }
   }
 
@@ -37,28 +52,46 @@ class LeadService {
         limit = 10,
         sortBy = 'createdAt',
         sortOrder = -1,
-        status,
         search,
         acctId,
-        trainerName,
-        memberName,
-        email
+        ...rest
       } = filters;
 
-      const query = { acctId };
+      // Resolve acctNo by joining through UserAccount → Account
+      // Handles both string and ObjectId stored _id in Account collection
+      let acctNo = null;
+      const userAccountEntry = await perfomDataExistanceCheck(UserAccount, { acctId });
+      if (userAccountEntry) {
+        const idToQuery = mongoose.Types.ObjectId.isValid(acctId)
+          ? { $or: [{ _id: acctId }, { _id: new mongoose.Types.ObjectId(acctId) }] }
+          : { _id: acctId };
+        const account = await Account.findOne(idToQuery).lean();
+        acctNo = account?.acctNo || null;
+      }
 
-      if (status) query.status = status;
+      // Build base query — match both new (acctId) and legacy (acctNo) leads
+      const acctFilter = acctNo
+        ? { $or: [{ acctId }, { acctNo }] }
+        : { acctId };
+      const query = { ...acctFilter };
 
-      if (trainerName) query.trainerName = { $regex: trainerName, $options: 'i' };
-      if (memberName) query.memberName = { $regex: memberName, $options: 'i' };
-      if (email) query.email = { $regex: email, $options: 'i' };
+      // Apply any extra field filters dynamically as case-insensitive regex
+      for (const [key, value] of Object.entries(rest)) {
+        if (value !== undefined && value !== null && value !== '') {
+          query[key] = { $regex: value, $options: 'i' };
+        }
+      }
 
       if (search) {
-        query.$or = [
-          { trainerName: { $regex: search, $options: 'i' } },
-          { memberName: { $regex: search, $options: 'i' } },
-          { email: { $regex: search, $options: 'i' } }
-        ];
+        const searchableFields = Object.keys(Lead.schema.paths).filter(
+          k => Lead.schema.paths[k].instance === 'String' && !['_id', 'acctId', 'adminId'].includes(k)
+        );
+        const searchConditions = searchableFields.map(field => ({ [field]: { $regex: search, $options: 'i' } }));
+        // Merge search with acct filter using $and so acct scope is preserved
+        query.$and = [acctFilter, { $or: searchConditions }];
+        delete query.$or;
+        delete query.acctId;
+        delete query.acctNo;
       }
 
       const skip = (page - 1) * limit;
@@ -69,8 +102,26 @@ class LeadService {
         performCount(Lead, query)
       ]);
 
+      // Enrich leads with admin name and profileImage
+      const leads = getResult.data || [];
+      const adminIds = [...new Set(leads.map(l => l.adminId).filter(Boolean))];
+      let adminMap = {};
+      if (adminIds.length > 0) {
+        const adminResult = await performGet(AccountAdmin, { adminId: { $in: adminIds } });
+        (adminResult.data || []).forEach(a => {
+          adminMap[a.adminId] = {
+            adminName: [a.firstName, a.lastName].filter(Boolean).join(' ') || null,
+            adminProfileImage: a.profileImage || null
+          };
+        });
+      }
+      const enrichedLeads = leads.map(lead => {
+        const info = lead.adminId ? (adminMap[lead.adminId] || {}) : {};
+        return { ...(lead.toObject?.() ?? lead), ...info };
+      });
+
       return {
-        data: getResult.data,
+        data: enrichedLeads,
         pagination: {
           total,
           page,

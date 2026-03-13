@@ -2,25 +2,24 @@ import mongoose from 'mongoose';
 
 const leadSchema = new mongoose.Schema(
   {
-    trainerName: {
+    _id: {
       type: String,
-      required: true
+      default: () => new mongoose.Types.ObjectId().toHexString()
+    },
+    trainerName: {
+      type: String
     },
     memberName: {
-      type: String,
-      required: true
+      type: String
     },
     email: {
-      type: String,
-      required: true,
-      unique: true
+      type: String
     },
     phone: {
       type: String
     },
     status: {
       type: String,
-      enum: ['new', 'contacted', 'qualified', 'converted', 'lost'],
       default: 'new'
     },
     source: {
@@ -28,6 +27,11 @@ const leadSchema = new mongoose.Schema(
     },
     notes: {
       type: String
+    },
+    adminId: {
+      type: String,
+      default: null,
+      index: true
     },
     acctId: {
       type: String,

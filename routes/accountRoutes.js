@@ -1,67 +1,36 @@
 import express from 'express';
-import ssoAuthMiddleware from '../middleware/ssoAuthMiddleware.js';
-import { verifyAccount, accountLinkToUser, accountName, getAccountToken, regenerateAccountToken, deleteAccount, getAdmins, getAdminsFromDb } from '../controllers/accountController.js';
+import { verifyAccount, accountLinkToUser, accountName, getAccountToken, regenerateAccountToken, deleteAccount } from '../controllers/accountController.js';
 
 const router = express.Router();
 
 /**
- * POST /api/accounts/verify
- * Verify acctNo via Botamation platform API (GET /api/super/accounts/{acctNo}),
- * save account + generate API key, and optionally link to user.
- * @access  Public — userId is passed in the request body
- * @body    { acctNo: string, userId?: string, email?: string }
+ * POST /verify — public, mounted separately in server.js without middleware
  */
 router.post('/verify', verifyAccount);
 
 /**
- * POST /api/accounts/link-user
- * Link an existing account to the authenticated user.
- * No external API call — uses provided data directly.
- * @access  Protected (SSO)
- * @body    flat: { acctNo, userId, name, email, role?, timezone?, profileImageUrl? }
- *          OR nested: { userId, userData: { acctNo, name, ... } }
+ * POST /link-user
  */
-router.post('/link-user', ssoAuthMiddleware, accountLinkToUser);
+router.post('/link-user', accountLinkToUser);
 
 /**
- * GET /api/accounts/user/:userId
- * @desc    Fetch all account names linked to a user
- * @access  Protected (SSO)
+ * GET /user/:userId
  */
-router.get('/user/:userId', ssoAuthMiddleware, accountName);
+router.get('/user/:userId', accountName);
 
 /**
- * POST /api/accounts/token
- * Get the current API key for an account (masked by default).
+ * POST /token
  */
-router.post('/token', ssoAuthMiddleware, getAccountToken);
+router.post('/token', getAccountToken);
 
 /**
- * POST /api/accounts/token/regenerate
- * Regenerate the API key for an account.
+ * POST /token/regenerate
  */
-router.post('/token/regenerate', ssoAuthMiddleware, regenerateAccountToken);
+router.post('/token/regenerate', regenerateAccountToken);
 
 /**
- * GET /api/accounts/admins/list?acctNo=<acctNo>
- * Fetch admin users for an account from the local database.
- * @access  Protected (SSO)
+ * DELETE /:acctId/user/:userId
  */
-router.get('/admins/list', ssoAuthMiddleware, getAdminsFromDb);
-
-/**
- * GET /api/accounts/admins?acctNo=<acctNo>
- * Fetch admin users for an account from the Botamation platform API.
- * Returns: [{ adminId, firstName, lastName, phone, profileImage }]
- * @access  Protected (SSO)
- */
-router.get('/admins', ssoAuthMiddleware, getAdmins);
-
-/**
- * DELETE /api/accounts/:acctId/user/:userId
- * Delete an account and all associated data (AccountApiKey, UserAccount).
- * @access  Protected (SSO)
- */
-router.delete('/:acctId/user/:userId', ssoAuthMiddleware, deleteAccount);
+router.delete('/:acctId/user/:userId', deleteAccount);
 
 export default router;

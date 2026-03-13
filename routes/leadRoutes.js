@@ -1,11 +1,7 @@
 import express from 'express';
 import leadController from '../controllers/leadController.js';
-import ssoAuthMiddleware from '../middleware/ssoAuthMiddleware.js';
 
 const router = express.Router();
-
-// Apply SSO authentication to all lead routes
-router.use(ssoAuthMiddleware);
 
 /**
  * API 1: POST /api/leads

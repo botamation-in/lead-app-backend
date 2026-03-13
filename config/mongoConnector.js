@@ -11,6 +11,7 @@ class MongoConnector {
       });
 
       console.log('MongoDB connected successfully');
+
       return true;
     } catch (error) {
       console.error('MongoDB connection error:', error);

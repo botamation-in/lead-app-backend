@@ -37,7 +37,7 @@ const accountAdminSchema = new mongoose.Schema(
             default: null
         }
     },
-    { timestamps: true }
+    { timestamps: true, collection: 'accountAdmins' }
 );
 
 // Unique per admin within an account
