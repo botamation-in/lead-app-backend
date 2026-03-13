@@ -35,6 +35,12 @@ const userAccountSchema = new mongoose.Schema(
     { timestamps: true, collection: 'user_account_rel' }
 );
 
+// Index for fetching all accounts belonging to a user (accountController — every page load)
+userAccountSchema.index({ userId: 1 });
+
+// Unique compound index for user-account link checks and account link/unlink flows
+userAccountSchema.index({ userId: 1, acctId: 1 }, { unique: true });
+
 const UserAccount = mongoose.model('UserAccount', userAccountSchema);
 
 export default UserAccount;

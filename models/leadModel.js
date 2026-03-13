@@ -6,44 +6,21 @@ const leadSchema = new mongoose.Schema(
       type: String,
       default: () => new mongoose.Types.ObjectId().toHexString()
     },
-    trainerName: {
-      type: String
-    },
-    memberName: {
-      type: String
-    },
-    email: {
-      type: String
-    },
-    phone: {
-      type: String
-    },
-    status: {
-      type: String,
-      default: 'new'
-    },
-    source: {
-      type: String
-    },
-    notes: {
-      type: String
-    },
-    adminId: {
-      type: String,
-      default: null,
-      index: true
-    },
     acctId: {
-      type: String,
-      ref: 'Account',
-      required: true,
-      index: true
+      type: String
     }
   },
   {
+    strict: false,
     timestamps: true
   }
 );
+
+// Index for scoped lead queries (grid find + countDocuments)
+leadSchema.index({ acctId: 1 });
+
+// Compound index for scoped lead queries with default createdAt sort and analytics date range
+leadSchema.index({ acctId: 1, createdAt: -1 });
 
 const Lead = mongoose.model('Lead', leadSchema);
 

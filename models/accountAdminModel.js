@@ -9,8 +9,7 @@ const accountAdminSchema = new mongoose.Schema(
         acctNo: {
             type: String,
             required: true,
-            trim: true,
-            index: true
+            trim: true
         },
         adminId: {
             type: String,
@@ -40,8 +39,11 @@ const accountAdminSchema = new mongoose.Schema(
     { timestamps: true, collection: 'accountAdmins' }
 );
 
-// Unique per admin within an account
-accountAdminSchema.index({ acctNo: 1, adminId: 1 }, { unique: true, sparse: true });
+// Compound index for admin upsert filter and admin list queries (acctNo prefix covers single-field acctNo queries too)
+accountAdminSchema.index({ acctNo: 1, adminId: 1 });
+
+// Index for lead enrichment — find admins by adminId $in after every paginated lead list
+accountAdminSchema.index({ adminId: 1 });
 
 const AccountAdmin = mongoose.model('AccountAdmin', accountAdminSchema);
 
