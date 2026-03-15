@@ -3,12 +3,13 @@ import leadController from '../controllers/leadController.js';
 
 const router = express.Router();
 
-/**
- * API 1: POST /api/leads
- * @desc    Send JSON data to create new lead(s)
- * @access  Protected (requires authentication)
- * @body    Single lead object or array of leads
- */
+
+router.get('/categories', leadController.getCategories.bind(leadController));
+
+router.put('/categories/:categoryId/default', leadController.setDefaultCategory.bind(leadController));
+
+router.post('/category/:category', leadController.createLead.bind(leadController));
+
 router.post('/', leadController.createLead.bind(leadController));
 
 /**

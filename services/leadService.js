@@ -1,4 +1,5 @@
 import Lead from '../models/leadModel.js';
+import LeadCategory from '../models/leadCategoryModel.js';
 import Account from '../models/accountModel.js';
 import AccountAdmin from '../models/accountAdminModel.js';
 import UserAccount from '../models/userAccountModel.js';
@@ -16,7 +17,7 @@ class LeadService {
    * Create new lead(s)
    * Resolves acctNo → acctId via Account collection before saving
    */
-  async createLead(leadData, acctNo) {
+  async createLead(leadData, acctNo, category = null) {
     try {
       // Resolve acctId from acctNo
       const account = await perfomDataExistanceCheck(Account, { acctNo });
@@ -27,15 +28,40 @@ class LeadService {
       }
       const acctId = account._id;
 
+      // Resolve category name — use provided value or fall back to "default"
+      const categoryName = category || 'default';
+      const isDefaultCategory = !category;
+
+      // Create category if it doesn't already exist
+      let categoryResult = null;
+      const existing = await perfomDataExistanceCheck(LeadCategory, { acctId, categoryName });
+      if (existing) {
+        categoryResult = { created: false, data: existing };
+      } else {
+        const count = await performCount(LeadCategory, { acctId });
+        // First category ever → default:true; explicit name → use count; no category sent → always default:true
+        const isDefault = isDefaultCategory ? true : count === 0;
+        const cat = await LeadCategory.create({ acctId, categoryName, default: isDefault });
+        categoryResult = { created: true, data: cat };
+      }
+
+      // Attach categoryId to lead if category was resolved
+      const categoryId = categoryResult ? categoryResult.data._id : undefined;
+      const addCategoryId = (item) => categoryId ? { ...item, categoryId } : item;
+
+      // Create lead(s)
+      let leadResult;
       if (Array.isArray(leadData)) {
         const results = await Promise.all(
-          leadData.map(item => performUpsert(Lead, {}, { ...item, acctId }))
+          leadData.map(item => performUpsert(Lead, {}, addCategoryId({ ...item, acctId })))
         );
-        return results.map(r => r.doc);
+        leadResult = results.map(r => r.doc);
       } else {
-        const result = await performUpsert(Lead, {}, { ...leadData, acctId });
-        return result.doc;
+        const result = await performUpsert(Lead, {}, addCategoryId({ ...leadData, acctId }));
+        leadResult = result.doc;
       }
+
+      return { lead: leadResult, category: categoryResult };
     } catch (error) {
       console.error('Error creating lead:', error);
       throw error.statusCode ? error : new Error(`Failed to create lead: ${error.message}`);
@@ -54,6 +80,7 @@ class LeadService {
         sortOrder = -1,
         search,
         acctId,
+        categoryId,
         ...rest
       } = filters;
 
@@ -74,6 +101,11 @@ class LeadService {
         ? { $or: [{ acctId }, { acctNo }] }
         : { acctId };
       const query = { ...acctFilter };
+
+      // Exact match for categoryId
+      if (categoryId) {
+        query.categoryId = categoryId;
+      }
 
       // Apply any extra field filters dynamically as case-insensitive regex
       for (const [key, value] of Object.entries(rest)) {
@@ -158,6 +190,74 @@ class LeadService {
     } catch (error) {
       console.error('Error deleting lead:', error);
       throw new Error(`Failed to delete lead: ${error.message}`);
+    }
+  }
+
+  /**
+   * Create a lead category if it doesn't already exist
+   * Sets default:true only when it is the first category for the account
+   */
+  async createCategory(acctNo, categoryName) {
+    try {
+      // Resolve acctNo → acctId
+      const account = await perfomDataExistanceCheck(Account, { acctNo });
+      if (!account) {
+        const err = new Error(`Account not found for acctNo: ${acctNo}`);
+        err.statusCode = 404;
+        throw err;
+      }
+      const acctId = account._id;
+
+      // Return existing category without creating a duplicate
+      const existing = await perfomDataExistanceCheck(LeadCategory, { acctId, categoryName });
+      if (existing) {
+        return { created: false, data: existing };
+      }
+
+      // Determine whether this is the first category for the account
+      const count = await performCount(LeadCategory, { acctId });
+      const isDefault = count === 0;
+
+      const category = await LeadCategory.create({ acctId, categoryName, default: isDefault });
+      return { created: true, data: category };
+    } catch (error) {
+      console.error('Error creating lead category:', error);
+      throw new Error(`Failed to create lead category: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get all categories for an account
+   */
+  async getCategories(acctId) {
+    try {
+      const result = await performGet(LeadCategory, { acctId }, [], { sort: { createdAt: 1 } });
+      return (result.data || []).map(c => ({ _id: c._id, categoryName: c.categoryName, default: c.default }));
+    } catch (error) {
+      console.error('Error getting lead categories:', error);
+      throw new Error(`Failed to get lead categories: ${error.message}`);
+    }
+  }
+
+  /**
+   * Set a category as default — unsets all others for the account
+   */
+  async setDefaultCategory(acctId, categoryId) {
+    try {
+      const category = await perfomDataExistanceCheck(LeadCategory, { _id: categoryId, acctId });
+      if (!category) {
+        const err = new Error('Category not found');
+        err.statusCode = 404;
+        throw err;
+      }
+      // Unset default on all categories for this account
+      await LeadCategory.updateMany({ acctId }, { $set: { default: false } });
+      // Set default on the target category
+      const updated = await LeadCategory.findByIdAndUpdate(categoryId, { $set: { default: true } }, { new: true });
+      return updated;
+    } catch (error) {
+      console.error('Error setting default category:', error);
+      throw error.statusCode ? error : new Error(`Failed to set default category: ${error.message}`);
     }
   }
 }

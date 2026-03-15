@@ -24,16 +24,29 @@ class LeadController {
         });
       }
 
-      const result = await leadService.createLead(leadData, acctNo);
+      const category = req.params.category || req.body.category || req.query.category || null;
+      // Strip category field from lead payload so it's not stored on the lead
+      const leadPayload = Array.isArray(leadData)
+        ? leadData.map(({ category: _, ...rest }) => rest)
+        : (({ category: _, ...rest }) => rest)(leadData);
+
+      const result = await leadService.createLead(leadPayload, acctNo, category);
 
       return res.status(201).json({
         success: true,
-        message: Array.isArray(leadData)
-          ? `${result.length} leads created successfully`
+        message: Array.isArray(leadPayload)
+          ? `${result.lead.length} leads created successfully`
           : 'Lead created successfully',
-        data: result
+        data: result.lead,
+        ...(result.category && { category: result.category.data })
       });
     } catch (error) {
+      if (error.statusCode === 404) {
+        return res.status(404).json({
+          success: false,
+          message: 'Account Not found'
+        });
+      }
       console.error('Error in createLead:', error);
       return res.status(error.statusCode || 400).json({
         success: false,
@@ -131,6 +144,103 @@ class LeadController {
         success: false,
         message: error.message
       });
+    }
+  }
+
+  /**
+   * Create a lead category from the route path parameter
+   * POST /api/leads/category/:categoryName
+   */
+  async createCategory(req, res) {
+    try {
+      const { category: categoryName } = req.params;
+
+      const acctNo = req.headers['x-acctno'] || req.query.acctNo;
+      if (!acctNo) {
+        return res.status(400).json({
+          success: false,
+          message: 'acctNo is required (header: x-acctNo or query param: acctNo)'
+        });
+      }
+
+      const result = await leadService.createCategory(acctNo, categoryName);
+
+      if (!result.created) {
+        return res.status(200).json({
+          success: true,
+          message: 'Category already exists',
+          data: result.data
+        });
+      }
+
+      return res.status(201).json({
+        success: true,
+        message: 'Category created successfully',
+        data: result.data
+      });
+    } catch (error) {
+      if (error.statusCode === 404) {
+        return res.status(404).json({
+          success: false,
+          message: 'Account Not found'
+        });
+      }
+      console.error('Error in createCategory:', error);
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
+
+  /**
+   * Get categories for an account
+   * GET /api/ui/leads/categories?acctId=
+   */
+  async getCategories(req, res) {
+    try {
+      const acctId = req.query.acctId || req.headers['x-acctno'];
+      if (!acctId) {
+        return res.status(400).json({
+          success: false,
+          message: 'acctId is required (query param: acctId or header: x-acctNo)'
+        });
+      }
+
+      const data = await leadService.getCategories(acctId);
+      return res.status(200).json({ success: true, data });
+    } catch (error) {
+      console.error('Error in getCategories:', error);
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
+
+  /**
+   * Set a category as default
+   * PUT /api/ui/leads/categories/:categoryId/default
+   */
+  async setDefaultCategory(req, res) {
+    try {
+      const { categoryId } = req.params;
+      const acctId = req.body.acctId || req.query.acctId;
+      if (!acctId) {
+        return res.status(400).json({
+          success: false,
+          message: 'acctId is required'
+        });
+      }
+
+      const data = await leadService.setDefaultCategory(acctId, categoryId);
+      return res.status(200).json({ success: true, message: 'Default category updated', data });
+    } catch (error) {
+      if (error.statusCode === 404) {
+        return res.status(404).json({ success: false, message: error.message });
+      }
+      console.error('Error in setDefaultCategory:', error);
+      return res.status(400).json({ success: false, message: error.message });
     }
   }
 }
