@@ -7,7 +7,7 @@
  * Features:
  * - Lists all secrets from AWS Secrets Manager (with optional prefix filtering)
  * - Retrieves each secret and parses as JSON
- * - Merges secrets into process.env (existing env vars take precedence)
+ * - Merges secrets into process.env (keys already set in .env are skipped)
  * - Clears AWS credentials from memory after loading for security
  * - Comprehensive error handling with fallback to .env.local
  * 
@@ -241,38 +241,40 @@ class SecretsManagerLoader {
             }
 
             // Step 3: Retrieve each secret and merge into process.env
+            // Keys already present in process.env (from .env file) are skipped
+            const envKeys = new Set(Object.keys(process.env));
             let totalKeysLoaded = 0;
-            let overwrittenKeys = 0;
+            let skippedKeys = 0;
             const loadedKeys = [];
 
             for (const secretName of secretNames) {
                 const secretData = await this._retrieveSecret(secretName);
 
-                // Merge into process.env (secrets manager values OVERWRITE existing env vars)
+                // Merge into process.env — skip keys already defined in .env
                 for (const [key, value] of Object.entries(secretData)) {
-                    const maskedValue = this._maskValue(value);
-                    const isOverwrite = process.env[key] !== undefined;
-
-                    if (isOverwrite) {
-                        overwrittenKeys++;
+                    if (envKeys.has(key)) {
+                        skippedKeys++;
+                        console.log(`[Secrets Manager]   ${key}: skipped (already set in .env)`);
+                        continue;
                     }
+                    const maskedValue = this._maskValue(value);
                     process.env[key] = String(value);
                     totalKeysLoaded++;
-
-                    loadedKeys.push({ key, maskedValue, isOverwrite });
+                    loadedKeys.push({ key, maskedValue });
                 }
             }
 
             // Log all loaded keys with masked values
-            console.log('[Secrets Manager] Loaded keys:');
-            for (const { key, maskedValue, isOverwrite } of loadedKeys) {
-                const overwriteMarker = isOverwrite ? ' ↻' : '';
-                console.log(`[Secrets Manager]   ${key}: ${maskedValue}${overwriteMarker}`);
+            if (loadedKeys.length > 0) {
+                console.log('[Secrets Manager] Loaded keys:');
+                for (const { key, maskedValue } of loadedKeys) {
+                    console.log(`[Secrets Manager]   ${key}: ${maskedValue}`);
+                }
             }
 
             console.log(`[Secrets Manager] ✓ Loaded ${totalKeysLoaded} environment variable(s) from AWS Secrets Manager`);
-            if (overwrittenKeys > 0) {
-                console.log(`[Secrets Manager] ↻ Overwrote ${overwrittenKeys} variable(s) from .env file`);
+            if (skippedKeys > 0) {
+                console.log(`[Secrets Manager] ⊘ Skipped ${skippedKeys} variable(s) already defined in .env`);
             }
 
             // Step 4: Clear credentials for security

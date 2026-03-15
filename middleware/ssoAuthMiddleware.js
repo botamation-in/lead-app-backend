@@ -2,6 +2,28 @@ import jwt from 'jsonwebtoken';
 import axios from 'axios';
 
 /**
+ * Check if authentication should be skipped for local development.
+ * When SKIP_LOGIN=true and NODE_ENV is local/development, returns mock user data
+ * so the SSO auth service doesn't need to be running.
+ * Both conditions must be true — NODE_ENV guard prevents accidental bypass in production.
+ */
+function getSkipLoginUser() {
+    const skipLogin = process.env.SKIP_LOGIN === 'true';
+    const env = process.env.NODE_ENV;
+    if (skipLogin && (env === 'local' || env === 'development')) {
+        return {
+            _id: process.env.SKIP_LOGIN_USER_ID,
+            userId: process.env.SKIP_LOGIN_USER_ID,
+            email: process.env.SKIP_LOGIN_USER_EMAIL,
+            name: process.env.SKIP_LOGIN_USER_NAME,
+            google_email: process.env.SKIP_LOGIN_USER_GOOGLE_EMAIL,
+            profileImageUrl: process.env.SKIP_LOGIN_USER_PROFILE_IMAGE
+        };
+    }
+    return null;
+}
+
+/**
  * Returns shared cookie configuration for setting/clearing cookies.
  * @param {number} maxAge - Cookie max-age in milliseconds
  */
@@ -38,18 +60,10 @@ export const getUserFromAuthService = async (token) => {
  * Automatically refreshes expired access tokens using refresh tokens
  */
 const ssoAuthMiddleware = async (req, res, next) => {
-    // ── SKIP_LOGIN: bypass SSO for local development ──────────────
-    if (process.env.SKIP_LOGIN === 'true') {
-        req.user = {
-            userId: process.env.SKIP_LOGIN_USER_ID || 'dev-user-001',
-            email: process.env.SKIP_LOGIN_USER_EMAIL || 'dev@botamation.in',
-            name: process.env.SKIP_LOGIN_USER_NAME || 'Dev User',
-            googleEmail: process.env.SKIP_LOGIN_USER_GOOGLE_EMAIL || '',
-            profileImage: process.env.SKIP_LOGIN_USER_PROFILE_IMAGE || '',
-            role: 'admin',
-            permissions: ['read', 'write', 'delete']
-        };
-        console.log('[SSO Middleware] ⚠️  SKIP_LOGIN=true — bypassing auth for dev user:', req.user.email);
+    // Skip authentication for local development
+    const skipUser = getSkipLoginUser();
+    if (skipUser) {
+        req.user = skipUser;
         return next();
     }
 
@@ -252,6 +266,13 @@ export const requireAccount = async (req, res, next) => {
  * Useful for backward compatibility with clients that send Authorization headers.
  */
 export const hybridAuthMiddleware = async (req, res, next) => {
+    // Skip authentication for local development
+    const skipUser = getSkipLoginUser();
+    if (skipUser) {
+        req.user = skipUser;
+        return next();
+    }
+
     // First try Bearer token from Authorization header
     const authHeader = req.headers['authorization'];
     if (authHeader && authHeader.startsWith('Bearer ')) {
