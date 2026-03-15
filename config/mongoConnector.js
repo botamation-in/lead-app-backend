@@ -3,9 +3,11 @@ import mongoose from 'mongoose';
 class MongoConnector {
   async connect() {
     try {
-      const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/leadapp';
+      const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017';
+      const dbName = process.env.DB_NAME || 'leadapp';
 
       await mongoose.connect(mongoUri, {
+        dbName,
         useNewUrlParser: true,
         useUnifiedTopology: true
       });
