@@ -36,11 +36,24 @@ class LeadService {
       let categoryResult = null;
       const existing = await perfomDataExistanceCheck(LeadCategory, { acctId, categoryName });
       if (existing) {
-        categoryResult = { created: false, data: existing };
+        if (isDefaultCategory) {
+          // No category provided: check if other categories exist for the account
+          const count = await performCount(LeadCategory, { acctId });
+          // If "default" is the only category → it should be default:true; otherwise default:false
+          const shouldBeDefault = count <= 1;
+          if (existing.default !== shouldBeDefault) {
+            const updated = await LeadCategory.findByIdAndUpdate(existing._id, { $set: { default: shouldBeDefault } }, { new: true });
+            categoryResult = { created: false, data: updated };
+          } else {
+            categoryResult = { created: false, data: existing };
+          }
+        } else {
+          categoryResult = { created: false, data: existing };
+        }
       } else {
         const count = await performCount(LeadCategory, { acctId });
-        // First category ever → default:true; explicit name → use count; no category sent → always default:true
-        const isDefault = isDefaultCategory ? true : count === 0;
+        // No category sent: default:true only if no other categories exist; explicit name: default:true only if first ever
+        const isDefault = isDefaultCategory ? count === 0 : count === 0;
         const cat = await LeadCategory.create({ acctId, categoryName, default: isDefault });
         categoryResult = { created: true, data: cat };
       }
