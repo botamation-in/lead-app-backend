@@ -16,14 +16,11 @@ const leadSchema = new mongoose.Schema(
   }
 );
 
-// Index for scoped lead queries (grid find + countDocuments)
-leadSchema.index({ acctId: 1 });
+// Compound index: category-scoped queries sorted by createdAt (covers find + sort + countDocuments)
+leadSchema.index({ acctId: 1, categoryId: 1, createdAt: -1 });
 
-// Compound index for scoped lead queries with default createdAt sort and analytics date range
+// Fallback index: account-scoped queries without categoryId
 leadSchema.index({ acctId: 1, createdAt: -1 });
-
-// Compound index for category-filtered lead queries
-leadSchema.index({ acctId: 1, categoryId: 1 });
 
 const Lead = mongoose.model('Lead', leadSchema);
 

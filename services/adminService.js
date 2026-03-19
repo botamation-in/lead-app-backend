@@ -26,7 +26,21 @@ export const syncAdminsFromPlatform = async (acctId) => {
 
     const admins = await getAdminsService(acctNo);
 
-    const normalised = (Array.isArray(admins) ? admins : [admins]).map((a) => ({
+    // ── Print full admin details from Botamation ──────────────────────
+    const adminList = Array.isArray(admins) ? admins : [admins];
+    console.log('\n[AdminService] ══════════════════════════════════════');
+    console.log(`[AdminService] Full admin details from Botamation (acctNo: ${acctNo})`);
+    console.log(`[AdminService] Total admins returned: ${adminList.length}`);
+    adminList.forEach((a, i) => {
+        console.log(`\n[AdminService] ── Admin #${i + 1} ──────────────────────────`);
+        Object.entries(a).forEach(([key, value]) => {
+            console.log(`[AdminService]   ${key}: ${JSON.stringify(value)}`);
+        });
+    });
+    console.log('[AdminService] ══════════════════════════════════════\n');
+    // ─────────────────────────────────────────────────────────────────
+
+    const normalised = adminList.map((a) => ({
         adminId: a.adminId ?? a.id ?? a._id ?? null,
         firstName: a.firstName ?? a.first_name ?? null,
         lastName: a.lastName ?? a.last_name ?? null,
