@@ -85,8 +85,17 @@ export const getAdminsService = async (acctNo) => {
             timeout: 10000
         });
 
+        const rawAdmins = Array.isArray(response.data) ? response.data : [response.data];
         console.log('[AccountService] ✅ Admins response status:', response.status);
-        console.log('[AccountService] ✅ Admins response data  :', JSON.stringify(response.data));
+        console.log('\n[AccountService] ════════════ RAW BOTAMATION ADMIN DATA ════════════');
+        console.log(`[AccountService] Total records: ${rawAdmins.length}`);
+        rawAdmins.forEach((a, i) => {
+            console.log(`\n[AccountService] ── Admin #${i + 1} ─────────────────────────────────`);
+            Object.entries(a).forEach(([key, val]) => {
+                console.log(`[AccountService]   ${key.padEnd(25)}: ${JSON.stringify(val)}`);
+            });
+        });
+        console.log('[AccountService] ════════════════════════════════════════════════════\n');
         return response.data;
     } catch (err) {
         console.error('[AccountService] ❌ Failed to fetch admins');

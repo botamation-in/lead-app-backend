@@ -1,4 +1,5 @@
 import accountApiKeyModel from '../models/accountApiKeyModel.js';
+import acctDataModel from '../models/accountModel.js';
 import { performGet } from '../config/mongoConnector.js';
 
 /**
@@ -18,52 +19,54 @@ export const apiKeyAuthMiddleware = async (req, res, next) => {
             req.query.apiKey ||
             req.body?.apiKey;
 
-        // 2️⃣ Extract acctId from multiple sources
-        const acctIdCandidates = [
-            req.get && req.get('x-acct-id'),
-            req.headers['x-acct-id'],
+        // 2️⃣ Extract acctNo from multiple sources
+        const acctNoCandidates = [
+            req.get && req.get('x-acct-no'),
+            req.headers['x-acct-no'],
             req.headers['x-acctno'],
-            req.query.acctId,
-            req.params?.acctId,
-            req.body?.acctId,
+            req.query.acctNo,
+            req.params?.acctNo,
+            req.body?.acctNo,
         ].filter(Boolean).map(String);
 
-        // 3️⃣ Validate both apiKey and acctId are present
+        // 3️⃣ Validate both apiKey and acctNo are present
         if (!apiKey) {
             return res.status(400).json({ success: false, message: 'Missing apiKey' });
         }
 
-        if (acctIdCandidates.length === 0) {
-            return res.status(400).json({ success: false, message: 'Missing acctId' });
+        if (acctNoCandidates.length === 0) {
+            return res.status(400).json({ success: false, message: 'Missing acctNo' });
         }
 
-        // 4️⃣ Ensure consistency if acctId provided from multiple sources
-        const uniqueAcctIds = new Set(acctIdCandidates);
-        if (uniqueAcctIds.size > 1) {
+        // 4️⃣ Ensure consistency if acctNo provided from multiple sources
+        const uniqueAcctNos = new Set(acctNoCandidates);
+        if (uniqueAcctNos.size > 1) {
             return res.status(400).json({
                 success: false,
-                message: 'multiple acctId values provided across sources'
+                message: 'multiple acctNo values provided across sources'
             });
         }
-        const acctId = acctIdCandidates[0];
+        const acctNo = acctNoCandidates[0];
 
-        // 5️⃣ Lookup token in DB (indexed query for performance)
-        const getResult = await performGet(accountApiKeyModel, { apiKey }, ['acctId', 'apiKey']);
+        // 5️⃣ Resolve acctNo → acctId (_id) from Account collection
+        const acctResult = await performGet(acctDataModel, { acctNo });
+        if (!acctResult.success || !Array.isArray(acctResult.data) || acctResult.data.length === 0) {
+            return res.status(401).json({ success: false, message: 'Invalid api key or account' });
+        }
+        const acctId = String(acctResult.data[0]._id);
+
+        // 6️⃣ Lookup token in DB — query by both apiKey AND acctId to confirm this account owns this key
+        const getResult = await performGet(accountApiKeyModel, { apiKey, acctId });
         if (!getResult.success || !Array.isArray(getResult.data) || getResult.data.length === 0) {
-            // Generic message to prevent user enumeration
-            return res.status(401).json({ success: false, message: 'Invalid api key' });
+            // Generic message to prevent user enumeration / account probing
+            return res.status(401).json({ success: false, message: 'Invalid api key or account' });
         }
 
         const tokenDoc = getResult.data[0];
 
-        // 6️⃣ Verify that the token belongs to the provided acctId
-        // 6️⃣ Verify that the apiKey belongs to the provided acctId
-        if (String(tokenDoc.acctId) !== acctId) {
-            return res.status(403).json({ success: false, message: 'API key does not belong to the provided account.' });
-        }
-
         // 7️⃣ Attach validated account info for downstream handlers
         req.acctId = acctId;
+        req.acctNo = acctNo;
         req.accountToken = tokenDoc.apiKey;
 
         return next();

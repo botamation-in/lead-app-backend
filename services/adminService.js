@@ -46,7 +46,9 @@ export const syncAdminsFromPlatform = async (acctId) => {
         lastName: a.lastName ?? a.last_name ?? null,
         phone: a.phone ?? a.mobile ?? null,
         email: a.email ?? null,
-        profileImage: a.profileImage ?? a.profile_image ?? a.profileImageUrl ?? null
+        profileImage: a.profile_pic ?? a.profileImage ?? a.profile_image ?? a.profileImageUrl
+            ?? a.picture ?? a.photo ?? a.avatar ?? a.image ?? a.thumbnail
+            ?? a.profile_photo ?? a.dp ?? null
     }));
 
     // Upsert each admin returned by Botamation

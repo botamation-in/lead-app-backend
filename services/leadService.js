@@ -2,7 +2,6 @@ import Lead from '../models/leadModel.js';
 import LeadCategory from '../models/leadCategoryModel.js';
 import Account from '../models/accountModel.js';
 import AccountAdmin from '../models/accountAdminModel.js';
-import UserAccount from '../models/userAccountModel.js';
 import mongoose from 'mongoose';
 import {
   performUpsert,
@@ -97,23 +96,8 @@ class LeadService {
         ...rest
       } = filters;
 
-      // Resolve acctNo by joining through UserAccount → Account
-      // Handles both string and ObjectId stored _id in Account collection
-      let acctNo = null;
-      const userAccountEntry = await perfomDataExistanceCheck(UserAccount, { acctId });
-      if (userAccountEntry) {
-        const idToQuery = mongoose.Types.ObjectId.isValid(acctId)
-          ? { $or: [{ _id: acctId }, { _id: new mongoose.Types.ObjectId(acctId) }] }
-          : { _id: acctId };
-        const account = await Account.findOne(idToQuery).lean();
-        acctNo = account?.acctNo || null;
-      }
-
-      // Build base query — match both new (acctId) and legacy (acctNo) leads
-      const acctFilter = acctNo
-        ? { $or: [{ acctId }, { acctNo }] }
-        : { acctId };
-      const query = { ...acctFilter };
+      // acctId is already validated by JWT middleware — no extra DB lookup needed
+      const query = { acctId };
 
       // Exact match for categoryId
       if (categoryId) {
@@ -132,11 +116,9 @@ class LeadService {
           k => Lead.schema.paths[k].instance === 'String' && !['_id', 'acctId', 'adminId'].includes(k)
         );
         const searchConditions = searchableFields.map(field => ({ [field]: { $regex: search, $options: 'i' } }));
-        // Merge search with acct filter using $and so acct scope is preserved
-        query.$and = [acctFilter, { $or: searchConditions }];
-        delete query.$or;
+        // Keep acctId + categoryId scope, add search as $or across text fields
+        query.$and = [{ acctId }, { $or: searchConditions }];
         delete query.acctId;
-        delete query.acctNo;
       }
 
       const skip = (page - 1) * limit;

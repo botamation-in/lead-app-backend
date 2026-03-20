@@ -103,7 +103,7 @@ app.use('/api/ui/accounts', ssoAuthMiddleware, accountRoutes);
 // Admin Routes — SSO required
 app.use('/api/ui/admins', ssoAuthMiddleware, adminRoutes);
 
-app.use('/api/leads', leadRoutes);
+app.use('/api/leads', apiKeyAuthMiddleware, leadRoutes);
 app.use('/api/ui/leads', ssoAuthMiddleware, leadRoutes);
 
 app.use('/api/ui/analytics', ssoAuthMiddleware, analyticsRoutes);
