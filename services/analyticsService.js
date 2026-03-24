@@ -23,7 +23,7 @@ class AnalyticsService {
                 const dateMatch = {};
                 if (dateFilter.from) dateMatch.$gte = dateFilter.from;
                 if (dateFilter.to) dateMatch.$lte = dateFilter.to;
-                matchStage.createdAt = dateMatch;
+                matchStage.updatedAt = dateMatch;
             }
 
             pipeline.push({ $match: matchStage });
