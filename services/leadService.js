@@ -163,6 +163,19 @@ class LeadService {
   }
 
   /**
+   * Get a single lead by ID
+   */
+  async getLeadById(id) {
+    try {
+      const result = await performGet(Lead, { _id: id });
+      return result?.data?.[0] || null;
+    } catch (error) {
+      console.error('Error getting lead by id:', error);
+      throw new Error(`Failed to get lead: ${error.message}`);
+    }
+  }
+
+  /**
    * Update lead
    */
   async updateLead(id, updateData) {

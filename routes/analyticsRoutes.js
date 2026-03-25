@@ -9,6 +9,6 @@ const router = express.Router();
  * @access  Protected (requires authentication)
  * @query   xAxis (trainerName), yAxis (memberName), aggregation (count), fromDate (optional), toDate (optional)
  */
-router.get('/chart-data', analyticsController.getChartData.bind(analyticsController));
+router.post('/chart-data', analyticsController.getChartData.bind(analyticsController));
 
 export default router;

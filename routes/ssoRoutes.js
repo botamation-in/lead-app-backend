@@ -383,6 +383,13 @@ router.get('/mock-auth-login', (req, res) => {
  */
 router.post('/mock-auth-callback', (req, res) => {
     try {
+        // Block this endpoint in production or when mock auth is not explicitly enabled
+        const useMockAuth = process.env.USE_MOCK_AUTH === 'true';
+        const nodeEnv = process.env.NODE_ENV;
+        if (!useMockAuth || nodeEnv === 'production') {
+            return res.status(403).json({ success: false, message: 'Mock authentication is not enabled' });
+        }
+
         console.log('[MOCK AUTH CALLBACK] ==== START ====');
         console.log('[MOCK AUTH CALLBACK] Request body:', req.body);
 

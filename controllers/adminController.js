@@ -14,6 +14,11 @@ export const getAdminsFromDb = async (req, res) => {
             return res.status(400).json({ success: false, message: 'acctId query parameter is required' });
         }
 
+        // Ensure the requested acctId matches the authenticated user's account
+        if (req.user?.acctId && acctId !== req.user.acctId) {
+            return res.status(403).json({ success: false, message: 'Access denied: acctId does not match authenticated user' });
+        }
+
         const result = await getAdminsFromDbService(acctId, filters);
 
         return res.status(200).json({ success: true, ...result });
@@ -35,6 +40,11 @@ export const getAdmins = async (req, res) => {
 
         if (!acctId) {
             return res.status(400).json({ success: false, message: 'acctId query parameter is required' });
+        }
+
+        // Ensure the requested acctId matches the authenticated user's account
+        if (req.user?.acctId && acctId !== req.user.acctId) {
+            return res.status(403).json({ success: false, message: 'Access denied: acctId does not match authenticated user' });
         }
 
         const admins = await syncAdminsFromPlatform(acctId);

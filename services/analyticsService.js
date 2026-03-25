@@ -11,14 +11,19 @@ class AnalyticsService {
      * @param {Object} params.dateFilter - Optional date range filter { from: Date, to: Date }
      * @returns {Promise<Array>} - Aggregated chart data
      */
-    async getChartData({ xAxis, yAxis, aggregation, dateFilter, acctId }) {
+    async getChartData({ xAxis, yAxis, aggregation, dateFilter, acctId, categoryId }) {
         try {
             const pipeline = [];
 
             // Stage 1: Always filter by acctId
             const matchStage = { acctId };
 
-            // Stage 2: Filter by date if provided
+            // Filter by categoryId if provided
+            if (categoryId) {
+                matchStage.categoryId = categoryId;
+            }
+
+            // Filter by date if provided
             if (dateFilter && (dateFilter.from || dateFilter.to)) {
                 const dateMatch = {};
                 if (dateFilter.from) dateMatch.$gte = dateFilter.from;
@@ -36,10 +41,13 @@ class AnalyticsService {
                 }
             });
 
-            // Stage 3: Sort by _id for consistent results
-            pipeline.push({ $sort: { _id: 1 } });
+            // Stage 3: Sort by value descending so top results are returned first
+            pipeline.push({ $sort: { value: -1 } });
 
-            // Stage 4: Project to format the output
+            // Stage 4: Cap at 50 groups to prevent massive payloads
+            pipeline.push({ $limit: 50 });
+
+            // Stage 5: Project to format the output
             pipeline.push({
                 $project: {
                     _id: 0,

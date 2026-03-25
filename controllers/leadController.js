@@ -16,7 +16,8 @@ class LeadController {
         });
       }
 
-      const acctNo = req.headers['x-acctno'] || req.query.acctNo;
+      // Use acctNo from the authenticated context — SSO or API key middleware
+      const acctNo = req.user?.acctNo || req.acctNo || req.headers['x-acctno'] || req.query.acctNo;
       if (!acctNo) {
         return res.status(400).json({
           success: false,
@@ -63,11 +64,12 @@ class LeadController {
     try {
       const { page, limit, sortBy, sortOrder, search, acctId: acctIdQuery, ...rest } = req.query;
 
-      const acctId = req.headers['x-acctno'] || acctIdQuery;
+      // Use acctId from the authenticated context — SSO or API key middleware
+      const acctId = req.user?.acctId || req.acctId || req.headers['x-acctno'] || acctIdQuery;
       if (!acctId) {
         return res.status(400).json({
           success: false,
-          message: 'acctId is required (header: x-acctNo or query param: acctId)'
+          message: 'acctId is required'
         });
       }
 
@@ -108,6 +110,21 @@ class LeadController {
       const { id } = req.params;
       const updateData = req.body;
 
+      // Resolve the caller's acctId from the authenticated context
+      const callerAcctId = req.user?.acctId || req.acctId;
+      if (!callerAcctId) {
+        return res.status(403).json({ success: false, message: 'Access denied: no authenticated account' });
+      }
+
+      // Verify the lead belongs to the caller's account before updating
+      const existing = await leadService.getLeadById(id);
+      if (!existing) {
+        return res.status(404).json({ success: false, message: 'Lead not found' });
+      }
+      if (existing.acctId !== callerAcctId) {
+        return res.status(403).json({ success: false, message: 'Access denied: lead does not belong to your account' });
+      }
+
       const result = await leadService.updateLead(id, updateData);
 
       return res.status(200).json({
@@ -132,6 +149,21 @@ class LeadController {
     try {
       const { id } = req.params;
 
+      // Resolve the caller's acctId from the authenticated context
+      const callerAcctId = req.user?.acctId || req.acctId;
+      if (!callerAcctId) {
+        return res.status(403).json({ success: false, message: 'Access denied: no authenticated account' });
+      }
+
+      // Verify the lead belongs to the caller's account before deleting
+      const existing = await leadService.getLeadById(id);
+      if (!existing) {
+        return res.status(404).json({ success: false, message: 'Lead not found' });
+      }
+      if (existing.acctId !== callerAcctId) {
+        return res.status(403).json({ success: false, message: 'Access denied: lead does not belong to your account' });
+      }
+
       await leadService.deleteLead(id);
 
       return res.status(200).json({
@@ -155,7 +187,8 @@ class LeadController {
     try {
       const { category: categoryName } = req.params;
 
-      const acctNo = req.headers['x-acctno'] || req.query.acctNo;
+      // Use acctNo from the authenticated context — SSO or API key middleware
+      const acctNo = req.user?.acctNo || req.acctNo || req.headers['x-acctno'] || req.query.acctNo;
       if (!acctNo) {
         return res.status(400).json({
           success: false,
@@ -199,11 +232,12 @@ class LeadController {
    */
   async getCategories(req, res) {
     try {
-      const acctId = req.query.acctId || req.headers['x-acctno'];
+      // Use acctId from the authenticated context — SSO or API key middleware
+      const acctId = req.user?.acctId || req.acctId || req.query.acctId || req.headers['x-acctno'];
       if (!acctId) {
         return res.status(400).json({
           success: false,
-          message: 'acctId is required (query param: acctId or header: x-acctNo)'
+          message: 'acctId is required'
         });
       }
 
@@ -225,7 +259,8 @@ class LeadController {
   async setDefaultCategory(req, res) {
     try {
       const { categoryId } = req.params;
-      const acctId = req.body.acctId || req.query.acctId;
+      // Use acctId from the authenticated context — SSO or API key middleware
+      const acctId = req.user?.acctId || req.acctId || req.body.acctId || req.query.acctId;
       if (!acctId) {
         return res.status(400).json({
           success: false,

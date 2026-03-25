@@ -67,6 +67,6 @@ export async function performDelete(Model, filter) {
   return Model.deleteOne(filter);
 }
 
-export async function performAggregate(Model, pipeline) {
-  return Model.aggregate(pipeline);
+export async function performAggregate(Model, pipeline, options = {}) {
+  return Model.aggregate(pipeline).option({ allowDiskUse: true, ...options });
 }

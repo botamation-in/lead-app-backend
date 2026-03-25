@@ -7,20 +7,24 @@ class AnalyticsController {
    */
   async getChartData(req, res) {
     try {
-      const { xAxis, yAxis, aggregation, dateFrom, dateTo, acctId } = req.query;
+      // Support both POST (body) and GET (query params)
+      const source = req.body && Object.keys(req.body).length ? req.body : req.query;
+      const { xAxis, yAxis, aggregation, dateFrom, dateTo, categoryId, acctId: acctIdSource } = source;
+
+      // Prefer acctId from the authenticated user's token; fall back to body/query param
+      const acctId = req.user?.acctId || acctIdSource;
+      if (!acctId) {
+        return res.status(403).json({
+          success: false,
+          message: 'No account associated with this session'
+        });
+      }
 
       // Validation
       if (!xAxis || !yAxis || !aggregation) {
         return res.status(400).json({
           success: false,
           message: 'xAxis, yAxis, and aggregation are required parameters'
-        });
-      }
-
-      if (!acctId) {
-        return res.status(400).json({
-          success: false,
-          message: 'acctId is required'
         });
       }
 
@@ -54,7 +58,8 @@ class AnalyticsController {
         yAxis,
         aggregation,
         dateFilter,
-        acctId
+        acctId,
+        categoryId: categoryId || null
       });
 
       return res.status(200).json({
