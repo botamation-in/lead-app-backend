@@ -423,7 +423,7 @@ export const getAccountToken = async (req, res) => {
         let displayApiKey = apiKey;
         if (masked) {
             displayApiKey = apiKey.length > 4
-                ? '*'.repeat(apiKey.length - 4) + apiKey.slice(-4)
+                ? '*'.repeat(apiKey.length - 4) + '....' + apiKey.slice(-4)
                 : '*'.repeat(apiKey.length);
         }
         return res.status(200).json({ success: true, apiKey: displayApiKey });
@@ -457,7 +457,7 @@ export const regenerateAccountToken = async (req, res) => {
         // Mask all but last 4 characters
         let maskedApiKey = newApiKey;
         if (newApiKey.length > 4) {
-            maskedApiKey = '*'.repeat(newApiKey.length - 4) + newApiKey.slice(-4);
+            maskedApiKey = '*'.repeat(newApiKey.length - 4) + '....' + newApiKey.slice(-4);
         } else {
             maskedApiKey = '*'.repeat(newApiKey.length);
         }
