@@ -30,7 +30,7 @@ if (hasAWSCredentials) {
 }
 
 const app = express();
-const PORT = process.env.PORT || 8081;
+const PORT = process.env.SERVER_PORT || process.env.PORT || 8081;
 
 // Parse allowed origins from environment variable
 const allowedOrigins = process.env.ALLOWED_ORIGINS

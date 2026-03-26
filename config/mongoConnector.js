@@ -4,7 +4,7 @@ class MongoConnector {
   async connect() {
     try {
       const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017';
-      const dbName = process.env.DB_NAME || 'leadapp';
+      const dbName = process.env.MONGO_DB_NAME || 'leadapp';
 
       await mongoose.connect(mongoUri, {
         dbName,

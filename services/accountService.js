@@ -16,7 +16,7 @@ import axios from 'axios';
  */
 export const verifyAccountServices = async (acctNo) => {
     const apiKey = process.env.CHATBOT_PLATFORM_API_KEY;
-    const baseUrl = process.env.BOTAMATION_API_BASE_URL || 'https://app.botamation.in';
+    const baseUrl = process.env.CHATBOT_API_URL || 'https://app.botamation.in';
     const fullUrl = `${baseUrl}/api/super/accounts/${acctNo}`;
 
     console.log('\n[AccountService] ══════════════════════════════════');
@@ -62,7 +62,7 @@ export const verifyAccountServices = async (acctNo) => {
  */
 export const getAdminsService = async (acctNo) => {
     const apiKey = process.env.CHATBOT_PLATFORM_API_KEY;
-    const baseUrl = process.env.BOTAMATION_API_BASE_URL || 'https://app.botamation.in';
+    const baseUrl = process.env.CHATBOT_API_URL || 'https://app.botamation.in';
     const fullUrl = `${baseUrl}/api/accounts/admins?page_id=${acctNo}`;
 
     console.log('\n[AccountService] ══════════════════════════════════');
