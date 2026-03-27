@@ -125,7 +125,16 @@ app.use((err, req, res, next) => {
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  const env = process.env.NODE_ENV || 'unknown';
+  const domain = process.env.COOKIE_DOMAIN || 'localhost';
+  console.log('');
+  console.log('+--------------------------------------------+');
+  console.log('|   Lead App Service Running                 |');
+  console.log('+--------------------------------------------+');
+  console.log('|   Environment: ' + env.padEnd(28) + '|');
+  console.log('|   Port:        ' + String(PORT).padEnd(28) + '|');
+  console.log('|   Domain:      ' + domain.padEnd(28) + '|');
+  console.log('+--------------------------------------------+');
 });
 
 export default app;
