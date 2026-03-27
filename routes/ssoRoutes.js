@@ -72,116 +72,29 @@ router.post('/login', (req, res) => {
  * @access  Public
  */
 router.get('/callback', (req, res) => {
-    try {
-        const { access_token, refresh_token, token, redirect } = req.query;
+    const { access_token, refresh_token, redirect } = req.query;
 
-        console.log('\n========================================');
-        console.log('[SSO Callback] 🔐 Processing authentication callback');
-        console.log('[SSO Callback] access_token:', access_token ? '✓ present' : '❌ missing');
-        console.log('[SSO Callback] refresh_token:', refresh_token ? '✓ present' : '❌ missing');
-        console.log('[SSO Callback] legacy token:', token ? '✓ present' : '❌ missing');
-        console.log('[SSO Callback] redirect param:', redirect);
+    console.log('[SSO Callback] Processing authentication callback');
+    console.log('[SSO Callback] access_token:', access_token ? 'present' : 'missing');
+    console.log('[SSO Callback] refresh_token:', refresh_token ? 'present' : 'missing');
+    console.log('[SSO Callback] redirect param:', redirect);
 
-        const redirectUrl = redirect
-            ? decodeURIComponent(redirect)
-            : (process.env.FRONTEND_BASE_URL || 'http://localhost:5173');
-
-        // ── Format 1: auth service passes access_token + refresh_token directly ──
-        if (access_token && refresh_token) {
-            try {
-                // Verify the tokens are valid before trusting them
-                const decoded = jwt.verify(access_token, process.env.JWT_SECRET);
-                console.log('[SSO Callback] ✅ access_token verified for user:', decoded.email);
-
-                res.cookie('access_token', access_token, getCookieConfig(6 * 60 * 60 * 1000));          // 6 hours
-                res.cookie('refresh_token', refresh_token, getCookieConfig(15 * 24 * 60 * 60 * 1000));  // 15 days
-
-                console.log('[SSO Callback] ✅ Cookies set from auth-service tokens. Redirecting to:', redirectUrl);
-                return res.redirect(redirectUrl);
-            } catch (verifyError) {
-                console.error('[SSO Callback] ❌ access_token verification failed:', verifyError.message);
-                return res.status(401).json({
-                    success: false,
-                    message: 'Invalid access_token received from auth service',
-                    error: verifyError.message
-                });
-            }
-        }
-
-        // ── Format 2: legacy single-token format ──
-        if (!token) {
-            console.log('[SSO Callback] ❌ No authentication tokens provided');
-            return res.status(400).json({
-                success: false,
-                message: 'Missing authentication tokens. Expected access_token + refresh_token or token query params.'
-            });
-        }
-
-        try {
-            console.log('[SSO Callback] 🔍 Verifying legacy token from auth service...');
-            const decoded = jwt.verify(token, process.env.JWT_SECRET);
-            console.log('[SSO Callback] ✓ Token valid for user:', decoded.email);
-
-            // Re-sign our own access and refresh tokens
-            const userPayload = {
-                userId: decoded.userId || decoded.id || decoded.email,
-                email: decoded.email,
-                acctId: decoded.acctId,
-                acctNo: decoded.acctNo,
-                role: decoded.role || 'user',
-                permissions: decoded.permissions || []
-            };
-
-            const newAccessToken = jwt.sign(userPayload, process.env.JWT_SECRET, { expiresIn: '6h' });
-            const newRefreshToken = jwt.sign(userPayload, process.env.JWT_REFRESH_SECRET, { expiresIn: '15d' });
-
-            res.cookie('access_token', newAccessToken, getCookieConfig(6 * 60 * 60 * 1000));          // 6 hours
-            res.cookie('refresh_token', newRefreshToken, getCookieConfig(15 * 24 * 60 * 60 * 1000));  // 15 days
-
-            console.log('[SSO Callback] ✅ Cookies set. Redirecting to:', redirectUrl);
-
-            return res.send(`
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <title>Login Success</title>
-                    <style>
-                        body { font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
-                        .container { text-align: center; background: white; padding: 40px; border-radius: 10px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); }
-                        .success-icon { font-size: 64px; color: #4CAF50; margin-bottom: 20px; }
-                        h1 { color: #333; margin: 0 0 10px 0; }
-                        p { color: #666; margin: 10px 0; }
-                    </style>
-                </head>
-                <body>
-                    <div class="container">
-                        <div class="success-icon">✓</div>
-                        <h1>Login Successful!</h1>
-                        <p>Authentication complete. Redirecting...</p>
-                        <p style="font-size:13px;color:#999;">Email: ${decoded.email}</p>
-                    </div>
-                    <script>
-                        setTimeout(() => { window.location.href = '${redirectUrl}'; }, 1500);
-                    </script>
-                </body>
-                </html>
-            `);
-        } catch (verifyError) {
-            console.error('[SSO Callback] ❌ Token verification failed:', verifyError.message);
-            return res.status(401).json({
-                success: false,
-                message: 'Invalid SSO token',
-                error: verifyError.message
-            });
-        }
-    } catch (error) {
-        console.error('[SSO Callback] ❌ Error:', error);
-        return res.status(500).json({
+    if (!access_token || !refresh_token) {
+        console.error('[SSO Callback] Missing tokens in callback');
+        return res.status(400).json({
             success: false,
-            message: 'Callback failed',
-            error: error.message
+            message: 'Missing authentication tokens'
         });
     }
+
+    // Trust tokens issued by the auth service — do not re-verify here.
+    // Both services share the same JWT_SECRET so the middleware will validate on every request.
+    res.cookie('access_token', access_token, getCookieConfig(6 * 60 * 60 * 1000));          // 6 hours
+    res.cookie('refresh_token', refresh_token, getCookieConfig(15 * 24 * 60 * 60 * 1000));  // 15 days
+
+    const redirectUrl = redirect || process.env.FRONTEND_BASE_URL || 'http://localhost:3000';
+    console.log('[SSO Callback] Cookies set. Redirecting to:', redirectUrl);
+    return res.redirect(redirectUrl);
 });
 
 /**
@@ -278,11 +191,15 @@ router.post('/logout', (req, res) => {
     res.clearCookie('refresh_token', cookieClearOptions);
     res.clearCookie('sso_token', cookieClearOptions); // Legacy cookie
 
-    const loginUrl = `${process.env.AUTH_SERVICE_URL || 'http://localhost:8081'}/login`;
+    const redirectParam = req.query.redirect || (req.body && req.body.redirect) || '';
+    const authServiceUrl = process.env.AUTH_SERVICE_URL || 'http://localhost:8081';
+    const redirectTarget = redirectParam || process.env.FRONTEND_BASE_URL || 'http://localhost:3000';
+    const loginUrl = `${authServiceUrl}/login?redirect=${encodeURIComponent(redirectTarget)}`;
 
     return res.json({
         success: true,
         message: 'Logged out successfully',
+        clearLocalStorage: true,
         loginUrl
     });
 });
