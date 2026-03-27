@@ -265,11 +265,12 @@ router.get('/verify', ssoAuthMiddleware, (req, res) => {
  * @access  Public
  */
 router.post('/logout', (req, res) => {
+    const isProduction = process.env.NODE_ENV === 'production';
     const cookieClearOptions = {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-        domain: process.env.COOKIE_DOMAIN || undefined,
+        secure: isProduction,
+        sameSite: isProduction ? 'none' : 'lax',
+        domain: process.env.COOKIE_DOMAIN || (isProduction ? '.botamation.in' : 'localhost'),
         path: '/'
     };
 

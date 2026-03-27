@@ -27,14 +27,19 @@ function getSkipLoginUser() {
  * Returns shared cookie configuration for setting/clearing cookies.
  * @param {number} maxAge - Cookie max-age in milliseconds
  */
-export const getCookieConfig = (maxAge) => ({
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    domain: process.env.COOKIE_DOMAIN || undefined,
-    path: '/',
-    ...(maxAge !== undefined ? { maxAge } : {})
-});
+export const getCookieConfig = (maxAge) => {
+    const isProduction = process.env.NODE_ENV === 'production';
+    const cookieDomain = process.env.COOKIE_DOMAIN || (isProduction ? '.botamation.in' : 'localhost');
+
+    return {
+        httpOnly: true,
+        secure: isProduction,
+        sameSite: isProduction ? 'none' : 'lax',
+        domain: cookieDomain,
+        path: '/',
+        ...(maxAge !== undefined ? { maxAge } : {})
+    };
+};
 
 /**
  * Fetch fresh user data from the centralised auth service.
