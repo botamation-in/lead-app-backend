@@ -73,31 +73,26 @@ const ssoAuthMiddleware = async (req, res, next) => {
     }
 
     try {
-        console.log('\n========================================');
-        console.log('[SSO Middleware] 🔍 NEW REQUEST:', req.method, req.path);
-        console.log('[SSO Middleware] Cookies present:', Object.keys(req.cookies || {}).join(', ') || 'none');
-
         // Extract tokens from cookies
         const accessToken = req.cookies?.access_token;
         const refreshToken = req.cookies?.refresh_token;
 
-        console.log('[SSO Middleware] Access token:', accessToken ? '✓ present' : '❌ missing');
-        console.log('[SSO Middleware] Refresh token:', refreshToken ? '✓ present' : '❌ missing');
+        // Diagnostic logging — helps trace production auth issues
+        console.log('[SSO] %s %s | cookies: %s | access_token: %s | refresh_token: %s | origin: %s',
+            req.method, req.path,
+            Object.keys(req.cookies || {}).join(',') || 'none',
+            accessToken ? 'present' : 'MISSING',
+            refreshToken ? 'present' : 'MISSING',
+            req.get('origin') || req.get('referer') || 'unknown'
+        );
 
-        // Reduced logging - only log on auth failures or first request
         if (!accessToken && !refreshToken) {
-            console.log('[SSO Middleware] ❌ No tokens found - authentication required');
-        }
-
-        if (!accessToken && !refreshToken) {
-            const redirectUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
-            const authUrl = `${process.env.AUTH_SERVICE_URL || 'http://localhost:8081'}/login?redirect=${encodeURIComponent(redirectUrl)}`;
-
+            console.log('[SSO] No tokens — returning 401');
             return res.status(401).json({
                 success: false,
                 authenticated: false,
                 message: 'Authentication required. Please log in.',
-                authUrl: authUrl
+                authUrl: `${process.env.AUTH_SERVICE_URL || 'http://localhost:8081'}/login?redirect=${encodeURIComponent(req.originalUrl)}`
             });
         }
 
@@ -105,9 +100,7 @@ const ssoAuthMiddleware = async (req, res, next) => {
         if (accessToken) {
             try {
                 const decoded = jwt.verify(accessToken, process.env.JWT_SECRET);
-                console.log('[SSO Middleware] ✅ Access token valid!');
-                console.log('[SSO Middleware] User:', decoded.email);
-                console.log('[SSO Middleware] → Proceeding to route handler');
+                console.log('[SSO] Access token valid for %s — proceeding', decoded.email);
 
                 // Set user information in request
                 req.user = {
@@ -121,16 +114,9 @@ const ssoAuthMiddleware = async (req, res, next) => {
 
                 return next();
             } catch (error) {
-                if (error.name === 'TokenExpiredError') {
-                    console.log('[SSO Middleware] Access token expired, attempting refresh');
-                    // Try to refresh token
+                console.log('[SSO] Access token invalid (%s) — trying refresh', error.message);
+                if (error.name === 'TokenExpiredError' || refreshToken) {
                     return await tryRefreshToken(req, res, next, refreshToken);
-                } else {
-                    console.error('[SSO Middleware] Invalid access token:', error.message);
-                    // Invalid token, try refresh if available
-                    if (refreshToken) {
-                        return await tryRefreshToken(req, res, next, refreshToken);
-                    }
                 }
             }
         }
@@ -141,17 +127,15 @@ const ssoAuthMiddleware = async (req, res, next) => {
         }
 
         // No valid authentication
-        const redirectUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
-        const authUrl = `${process.env.AUTH_SERVICE_URL || 'http://localhost:8081'}/login?redirect=${encodeURIComponent(redirectUrl)}`;
-
+        console.log('[SSO] No valid auth — returning 401');
         return res.status(401).json({
             success: false,
             authenticated: false,
             message: 'Invalid or expired authentication. Please log in again.',
-            authUrl: authUrl
+            authUrl: `${process.env.AUTH_SERVICE_URL || 'http://localhost:8081'}/login?redirect=${encodeURIComponent(req.originalUrl)}`
         });
     } catch (error) {
-        console.error('[SSO Middleware] Error:', error);
+        console.error('[SSO] Middleware error:', error.message);
         return res.status(500).json({
             success: false,
             message: 'Authentication error',
@@ -164,47 +148,34 @@ const ssoAuthMiddleware = async (req, res, next) => {
  * Try to refresh the access token using refresh token
  */
 async function tryRefreshToken(req, res, next, refreshToken) {
-    console.log('[SSO Middleware] 🔄 Attempting to refresh token...');
     try {
-        // Validate refresh token
-        const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
-        console.log('[SSO Middleware] ✓ Refresh token valid, generating new access token');
-        console.log('[SSO Middleware] User:', decoded.email);
+        const refreshSecret = process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET;
+        const decoded = jwt.verify(refreshToken, refreshSecret);
+        console.log('[SSO] Refresh token valid for %s — issuing new tokens', decoded.email);
 
         // Generate new access token (6 hours)
-        const newAccessToken = jwt.sign(
-            {
-                userId: decoded.userId,
-                email: decoded.email,
-                acctId: decoded.acctId,
-                acctNo: decoded.acctNo,
-                role: decoded.role,
-                permissions: decoded.permissions
-            },
-            process.env.JWT_SECRET,
-            { expiresIn: '6h' }
-        );
+        const tokenPayload = {
+            userId: decoded.userId,
+            email: decoded.email,
+            acctId: decoded.acctId,
+            acctNo: decoded.acctNo,
+            role: decoded.role,
+            permissions: decoded.permissions
+        };
+        const newAccessToken = jwt.sign(tokenPayload, process.env.JWT_SECRET, { expiresIn: '6h' });
 
         // Generate new refresh token (15 days)
         const newRefreshToken = jwt.sign(
-            {
-                userId: decoded.userId,
-                email: decoded.email,
-                acctId: decoded.acctId,
-                acctNo: decoded.acctNo,
-                role: decoded.role,
-                permissions: decoded.permissions
-            },
-            process.env.JWT_REFRESH_SECRET,
+            tokenPayload,
+            process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET,
             { expiresIn: '15d' }
         );
 
         // Set refreshed cookies
-        res.cookie('access_token', newAccessToken, getCookieConfig(6 * 60 * 60 * 1000));   // 6 hours
-        res.cookie('refresh_token', newRefreshToken, getCookieConfig(15 * 24 * 60 * 60 * 1000)); // 15 days
+        res.cookie('access_token', newAccessToken, getCookieConfig(6 * 60 * 60 * 1000));
+        res.cookie('refresh_token', newRefreshToken, getCookieConfig(15 * 24 * 60 * 60 * 1000));
 
-        console.log('[SSO Middleware] ✅ New access token generated and set');
-        console.log('[SSO Middleware] → Proceeding to route handler with refreshed token');
+        console.log('[SSO] Tokens refreshed successfully for %s', decoded.email);
 
         // Set user information in request
         req.user = {
@@ -218,17 +189,13 @@ async function tryRefreshToken(req, res, next, refreshToken) {
 
         return next();
     } catch (error) {
-        console.error('[SSO Middleware] Refresh token invalid:', error.message);
-
-        // Refresh token also invalid, require re-login
-        const redirectUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
-        const authUrl = `${process.env.AUTH_SERVICE_URL || 'http://localhost:8081'}/login?redirect=${encodeURIComponent(redirectUrl)}`;
+        console.error('[SSO] Refresh failed:', error.message);
 
         return res.status(401).json({
             success: false,
             authenticated: false,
             message: 'Session expired. Please log in again.',
-            authUrl: authUrl
+            authUrl: `${process.env.AUTH_SERVICE_URL || 'http://localhost:8081'}/login?redirect=${encodeURIComponent(req.originalUrl)}`
         });
     }
 }
