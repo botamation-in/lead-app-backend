@@ -88,11 +88,12 @@ const ssoAuthMiddleware = async (req, res, next) => {
 
         if (!accessToken && !refreshToken) {
             console.log('[SSO] No tokens — returning 401');
+            const frontendUrl = process.env.FRONTEND_BASE_URL || 'http://localhost:3000';
             return res.status(401).json({
                 success: false,
                 authenticated: false,
                 message: 'Authentication required. Please log in.',
-                authUrl: `${process.env.AUTH_SERVICE_URL || 'http://localhost:8081'}/login?redirect=${encodeURIComponent(req.originalUrl)}`
+                authUrl: `${process.env.AUTH_SERVICE_URL || 'http://localhost:8081'}/login?redirect=${encodeURIComponent(frontendUrl)}`
             });
         }
 
@@ -128,11 +129,12 @@ const ssoAuthMiddleware = async (req, res, next) => {
 
         // No valid authentication
         console.log('[SSO] No valid auth — returning 401');
+        const frontendUrl = process.env.FRONTEND_BASE_URL || 'http://localhost:3000';
         return res.status(401).json({
             success: false,
             authenticated: false,
             message: 'Invalid or expired authentication. Please log in again.',
-            authUrl: `${process.env.AUTH_SERVICE_URL || 'http://localhost:8081'}/login?redirect=${encodeURIComponent(req.originalUrl)}`
+            authUrl: `${process.env.AUTH_SERVICE_URL || 'http://localhost:8081'}/login?redirect=${encodeURIComponent(frontendUrl)}`
         });
     } catch (error) {
         console.error('[SSO] Middleware error:', error.message);
@@ -191,11 +193,12 @@ async function tryRefreshToken(req, res, next, refreshToken) {
     } catch (error) {
         console.error('[SSO] Refresh failed:', error.message);
 
+        const frontendUrl = process.env.FRONTEND_BASE_URL || 'http://localhost:3000';
         return res.status(401).json({
             success: false,
             authenticated: false,
             message: 'Session expired. Please log in again.',
-            authUrl: `${process.env.AUTH_SERVICE_URL || 'http://localhost:8081'}/login?redirect=${encodeURIComponent(req.originalUrl)}`
+            authUrl: `${process.env.AUTH_SERVICE_URL || 'http://localhost:8081'}/login?redirect=${encodeURIComponent(frontendUrl)}`
         });
     }
 }
