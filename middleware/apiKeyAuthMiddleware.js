@@ -20,12 +20,7 @@ export const apiKeyAuthMiddleware = async (req, res, next) => {
 
         // 2️⃣ Extract acctNo from multiple sources
         const acctNoCandidates = [
-            req.get && req.get('x-acct-no'),
-            req.headers['x-acct-no'],
-            req.headers['x-acctno'],
-            req.query.acctNo,
-            req.params?.acctNo,
-            req.body?.acctNo,
+            req.headers['x-page-id']
         ].filter(Boolean).map(String);
 
         // 3️⃣ Validate both apiKey and acctNo are present
