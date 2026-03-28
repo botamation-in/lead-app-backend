@@ -11,6 +11,7 @@ router.put('/categories/:categoryId/default', leadController.setDefaultCategory.
 router.post('/category/:category', leadController.createLead.bind(leadController));
 
 router.post('/', leadController.createLead.bind(leadController));
+router.post('/:category', leadController.createLead.bind(leadController));
 
 /**
  * API 2: GET /api/leads

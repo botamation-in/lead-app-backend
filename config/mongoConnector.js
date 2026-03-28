@@ -45,9 +45,10 @@ export async function performUpsert(Model, filter, data) {
 }
 
 export async function performGet(Model, query, populate = [], options = {}) {
-  const { sort, skip, limit } = options;
+  const { sort, skip, limit, select } = options;
   let q = Model.find(query);
   if (populate && populate.length) q = q.populate(populate);
+  if (select) q = q.select(select);
   if (sort) q = q.sort(sort);
   if (skip != null) q = q.skip(skip);
   if (limit != null) q = q.limit(limit);

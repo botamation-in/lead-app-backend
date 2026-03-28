@@ -7,31 +7,35 @@ class LeadController {
    */
   async createLead(req, res) {
     try {
-      const leadData = req.body;
+      const body = req.body;
 
-      if (!leadData || (Array.isArray(leadData) && leadData.length === 0)) {
+      // Expect { config?, data } envelope — data is mandatory
+      const data = body?.data;
+      if (!data || (Array.isArray(data) && data.length === 0)) {
         return res.status(400).json({
           success: false,
-          message: 'Lead data is required'
+          message: 'data is required'
         });
       }
 
-      // Use acctNo from the authenticated context — SSO or API key middleware
-      const acctNo = req.user?.acctNo || req.acctNo || req.headers['x-acctno'] || req.query.acctNo;
-      if (!acctNo) {
+      const mergeProperties = body?.config?.merge?.properties ?? null;
+
+      // acctId is set on req by both apiKey and SSO middlewares — no DB lookup needed
+      const acctId = req.user?.acctId || req.acctId;
+      if (!acctId) {
         return res.status(400).json({
           success: false,
-          message: 'acctNo is required (header: x-acctNo or query param: acctNo)'
+          message: 'Authenticated account context is required'
         });
       }
 
-      const category = req.params.category || req.body.category || req.query.category || null;
+      const category = req.params.category || req.params.id || (Array.isArray(data) ? null : data.category) || req.query.category || null;
       // Strip category field from lead payload so it's not stored on the lead
-      const leadPayload = Array.isArray(leadData)
-        ? leadData.map(({ category: _, ...rest }) => rest)
-        : (({ category: _, ...rest }) => rest)(leadData);
+      const leadPayload = Array.isArray(data)
+        ? data.map(({ category: _, ...rest }) => rest)
+        : (({ category: _, ...rest }) => rest)(data);
 
-      const result = await leadService.createLead(leadPayload, acctNo, category);
+      const result = await leadService.createLead(leadPayload, acctId, category, mergeProperties);
 
       return res.status(201).json({
         success: true,
@@ -42,12 +46,6 @@ class LeadController {
         ...(result.category && { category: result.category.data })
       });
     } catch (error) {
-      if (error.statusCode === 404) {
-        return res.status(404).json({
-          success: false,
-          message: 'Account Not found'
-        });
-      }
       console.error('Error in createLead:', error);
       return res.status(error.statusCode || 400).json({
         success: false,
@@ -78,7 +76,7 @@ class LeadController {
       const filters = {
         page: page ? parseInt(page) : 1,
         limit: limit ? parseInt(limit) : 10,
-        sortBy: sortBy || 'createdAt',
+        sortBy: sortBy || 'updatedAt',
         sortOrder: sortOrderVal,
         search,
         acctId,
@@ -103,42 +101,10 @@ class LeadController {
 
   /**
    * Update lead
-   * PUT /api/leads/:id
+   * PUT /api/leads/:id — identical behaviour to POST; :id segment is treated as the category
    */
   async updateLead(req, res) {
-    try {
-      const { id } = req.params;
-      const updateData = req.body;
-
-      // Resolve the caller's acctId from the authenticated context
-      const callerAcctId = req.user?.acctId || req.acctId;
-      if (!callerAcctId) {
-        return res.status(403).json({ success: false, message: 'Access denied: no authenticated account' });
-      }
-
-      // Verify the lead belongs to the caller's account before updating
-      const existing = await leadService.getLeadById(id);
-      if (!existing) {
-        return res.status(404).json({ success: false, message: 'Lead not found' });
-      }
-      if (existing.acctId !== callerAcctId) {
-        return res.status(403).json({ success: false, message: 'Access denied: lead does not belong to your account' });
-      }
-
-      const result = await leadService.updateLead(id, updateData);
-
-      return res.status(200).json({
-        success: true,
-        message: 'Lead updated successfully',
-        data: result
-      });
-    } catch (error) {
-      console.error('Error in updateLead:', error);
-      return res.status(400).json({
-        success: false,
-        message: error.message
-      });
-    }
+    return this.createLead(req, res);
   }
 
   /**

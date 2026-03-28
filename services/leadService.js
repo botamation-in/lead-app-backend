@@ -16,64 +16,56 @@ class LeadService {
    * Create new lead(s)
    * Resolves acctNo → acctId via Account collection before saving
    */
-  async createLead(leadData, acctNo, category = null) {
+  async createLead(leadData, acctId, category = null, mergeProperties = null) {
     try {
-      // Resolve acctId from acctNo
-      const account = await perfomDataExistanceCheck(Account, { acctNo });
-      if (!account) {
-        const err = new Error(`Account not found for acctNo: ${acctNo}`);
-        err.statusCode = 404;
-        throw err;
-      }
-      const acctId = account._id;
-
-      // Resolve category name — use provided value or fall back to "default"
       const categoryName = category || 'default';
-      const isDefaultCategory = !category;
 
-      // Create category if it doesn't already exist
-      let categoryResult = null;
-      const existing = await perfomDataExistanceCheck(LeadCategory, { acctId, categoryName });
-      if (existing) {
-        if (isDefaultCategory) {
-          // No category provided: check if other categories exist for the account
-          const count = await performCount(LeadCategory, { acctId });
-          // If "default" is the only category → it should be default:true; otherwise default:false
-          const shouldBeDefault = count <= 1;
-          if (existing.default !== shouldBeDefault) {
-            const updated = await LeadCategory.findByIdAndUpdate(existing._id, { $set: { default: shouldBeDefault } }, { new: true });
-            categoryResult = { created: false, data: updated };
-          } else {
-            categoryResult = { created: false, data: existing };
-          }
-        } else {
-          categoryResult = { created: false, data: existing };
+      // Single atomic find-or-create: hits the unique index { acctId, categoryName }.
+      // $setOnInsert only applies on insert — existing docs are returned unchanged with no extra writes.
+      const categoryDoc = await LeadCategory.findOneAndUpdate(
+        { acctId, categoryName },
+        { $setOnInsert: { acctId, categoryName, default: !category } },
+        { upsert: true, new: true }
+      );
+
+      const categoryId = categoryDoc._id;
+      const addCategoryId = (item) => ({ ...item, categoryId });
+
+      // Build filter for merge-based upsert: scoped to acctId + specified merge fields present in the item
+      const buildMergeFilter = (item) => {
+        if (!mergeProperties?.length) return {};
+        const filter = { acctId };
+        for (const prop of mergeProperties) {
+          if (prop in item) filter[prop] = item[prop];
         }
-      } else {
-        const count = await performCount(LeadCategory, { acctId });
-        // No category sent: default:true only if no other categories exist; explicit name: default:true only if first ever
-        const isDefault = isDefaultCategory ? count === 0 : count === 0;
-        const cat = await LeadCategory.create({ acctId, categoryName, default: isDefault });
-        categoryResult = { created: true, data: cat };
-      }
+        return filter;
+      };
 
-      // Attach categoryId to lead if category was resolved
-      const categoryId = categoryResult ? categoryResult.data._id : undefined;
-      const addCategoryId = (item) => categoryId ? { ...item, categoryId } : item;
-
-      // Create lead(s)
+      // Create / upsert lead(s)
       let leadResult;
       if (Array.isArray(leadData)) {
-        const results = await Promise.all(
-          leadData.map(item => performUpsert(Lead, {}, addCategoryId({ ...item, acctId })))
-        );
-        leadResult = results.map(r => r.doc);
+        if (mergeProperties?.length) {
+          // Single bulkWrite round-trip for array + merge: one network call for all writes
+          const ops = leadData.map(item => {
+            const enriched = addCategoryId({ ...item, acctId });
+            return { updateOne: { filter: buildMergeFilter(item), update: { $set: enriched }, upsert: true } };
+          });
+          await Lead.bulkWrite(ops, { ordered: false });
+          // Re-fetch the upserted/updated docs via the same merge conditions
+          const mergeFilters = leadData.map(item => buildMergeFilter(item));
+          leadResult = await Lead.find({ $or: mergeFilters }).lean();
+        } else {
+          const results = await Promise.all(
+            leadData.map(item => performUpsert(Lead, {}, addCategoryId({ ...item, acctId })))
+          );
+          leadResult = results.map(r => r.doc);
+        }
       } else {
-        const result = await performUpsert(Lead, {}, addCategoryId({ ...leadData, acctId }));
+        const result = await performUpsert(Lead, buildMergeFilter(leadData), addCategoryId({ ...leadData, acctId }));
         leadResult = result.doc;
       }
 
-      return { lead: leadResult, category: categoryResult };
+      return { lead: leadResult, category: { data: categoryDoc } };
     } catch (error) {
       console.error('Error creating lead:', error);
       throw error.statusCode ? error : new Error(`Failed to create lead: ${error.message}`);
@@ -88,7 +80,7 @@ class LeadService {
       const {
         page = 1,
         limit = 10,
-        sortBy = 'createdAt',
+        sortBy = 'updatedAt',
         sortOrder = -1,
         search,
         acctId,
@@ -125,7 +117,7 @@ class LeadService {
       const sort = { [sortBy]: sortOrder };
 
       const [getResult, total] = await Promise.all([
-        performGet(Lead, query, [], { sort, skip, limit }),
+        performGet(Lead, query, [], { sort, skip, limit, select: '-createdAt -updatedAt' }),
         performCount(Lead, query)
       ]);
 
