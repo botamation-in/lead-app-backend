@@ -10,5 +10,6 @@ const router = express.Router();
  * @query   xAxis (trainerName), yAxis (memberName), aggregation (count), fromDate (optional), toDate (optional)
  */
 router.post('/chart-data', analyticsController.getChartData.bind(analyticsController));
+router.get('/chart-data', analyticsController.getChartData.bind(analyticsController));
 
 export default router;

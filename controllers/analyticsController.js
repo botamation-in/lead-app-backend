@@ -9,7 +9,7 @@ class AnalyticsController {
     try {
       // Support both POST (body) and GET (query params)
       const source = req.body && Object.keys(req.body).length ? req.body : req.query;
-      const { xAxis, yAxis, aggregation, dateFrom, dateTo, categoryId, acctId: acctIdSource } = source;
+      const { xAxis, yAxis, zAxis, aggregation, dateFrom, dateTo, categoryId, acctId: acctIdSource } = source;
 
       // Prefer acctId from the authenticated user's token; fall back to body/query param
       const acctId = req.user?.acctId || acctIdSource;
@@ -56,6 +56,7 @@ class AnalyticsController {
       const chartData = await analyticsService.getChartData({
         xAxis,
         yAxis,
+        zAxis: zAxis || null,
         aggregation,
         dateFilter,
         acctId,

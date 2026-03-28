@@ -11,7 +11,7 @@ class AnalyticsService {
      * @param {Object} params.dateFilter - Optional date range filter { from: Date, to: Date }
      * @returns {Promise<Array>} - Aggregated chart data
      */
-    async getChartData({ xAxis, yAxis, aggregation, dateFilter, acctId, categoryId }) {
+    async getChartData({ xAxis, yAxis, zAxis, aggregation, dateFilter, acctId, categoryId }) {
         try {
             const pipeline = [];
 
@@ -33,28 +33,61 @@ class AnalyticsService {
 
             pipeline.push({ $match: matchStage });
 
-            // Stage 2: Group by xAxis and aggregate yAxis
-            pipeline.push({
-                $group: {
-                    _id: `$${xAxis}`,
-                    value: this._getAggregationExpression(aggregation, yAxis)
-                }
-            });
+            if (zAxis) {
+                // Grouped / Stacked mode: group by both xAxis and zAxis
+                // Returns [{name, zKey, value}] so the frontend can pivot into multi-series
 
-            // Stage 3: Sort by value descending so top results are returned first
-            pipeline.push({ $sort: { value: -1 } });
+                // Stage 2: Group by composite (xAxis + zAxis)
+                pipeline.push({
+                    $group: {
+                        _id: {
+                            name: `$${xAxis}`,
+                            zKey: `$${zAxis}`
+                        },
+                        value: this._getAggregationExpression(aggregation, yAxis)
+                    }
+                });
 
-            // Stage 4: Cap at 50 groups to prevent massive payloads
-            pipeline.push({ $limit: 50 });
+                // Stage 3: Sort by xAxis name then zKey for consistent ordering
+                pipeline.push({ $sort: { '_id.name': 1, '_id.zKey': 1 } });
 
-            // Stage 5: Project to format the output
-            pipeline.push({
-                $project: {
-                    _id: 0,
-                    name: '$_id',
-                    value: 1
-                }
-            });
+                // Stage 4: Cap results
+                pipeline.push({ $limit: 500 });
+
+                // Stage 5: Project to {name, zKey, value}
+                pipeline.push({
+                    $project: {
+                        _id: 0,
+                        name: '$_id.name',
+                        zKey: '$_id.zKey',
+                        value: 1
+                    }
+                });
+            } else {
+                // Standard single-axis mode
+                // Stage 2: Group by xAxis and aggregate yAxis
+                pipeline.push({
+                    $group: {
+                        _id: `$${xAxis}`,
+                        value: this._getAggregationExpression(aggregation, yAxis)
+                    }
+                });
+
+                // Stage 3: Sort by value descending so top results are returned first
+                pipeline.push({ $sort: { value: -1 } });
+
+                // Stage 4: Cap at 50 groups to prevent massive payloads
+                pipeline.push({ $limit: 50 });
+
+                // Stage 5: Project to format the output
+                pipeline.push({
+                    $project: {
+                        _id: 0,
+                        name: '$_id',
+                        value: 1
+                    }
+                });
+            }
 
             return await performAggregate(Lead, pipeline);
         } catch (error) {
