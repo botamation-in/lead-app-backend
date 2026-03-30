@@ -22,9 +22,11 @@ class LeadService {
 
       // Single atomic find-or-create: hits the unique index { acctId, categoryName }.
       // $setOnInsert only applies on insert — existing docs are returned unchanged with no extra writes.
+      const existingCategoryCount = await LeadCategory.countDocuments({ acctId });
+      const isFirstCategory = existingCategoryCount === 0;
       const categoryDoc = await LeadCategory.findOneAndUpdate(
         { acctId, categoryName },
-        { $setOnInsert: { acctId, categoryName, default: !category } },
+        { $setOnInsert: { acctId, categoryName, default: isFirstCategory } },
         { upsert: true, new: true }
       );
 
