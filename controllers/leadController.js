@@ -193,6 +193,25 @@ class LeadController {
   }
 
   /**
+   * Get all unique field names per category
+   * GET /api/ui/leads/fields?acctId=
+   */
+  async getFields(req, res) {
+    try {
+      const acctId = req.user?.acctId || req.acctId || req.query.acctId || req.headers['x-acctno'];
+      if (!acctId) {
+        return res.status(400).json({ success: false, message: 'acctId is required' });
+      }
+
+      const data = await leadService.getFieldsByCategory(acctId);
+      return res.status(200).json({ success: true, categories: data });
+    } catch (error) {
+      console.error('Error in getFields:', error);
+      return res.status(error.statusCode || 500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
    * Get categories for an account
    * GET /api/ui/leads/categories?acctId=
    */

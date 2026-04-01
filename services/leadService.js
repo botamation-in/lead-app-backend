@@ -33,6 +33,11 @@ class LeadService {
       const categoryId = categoryDoc._id;
       const addCategoryId = (item) => ({ ...item, categoryId });
 
+      const EXCLUDED_FIELDS = new Set(['_id', 'acctId', 'categoryId', '__v', 'createdAt', 'updatedAt', 'category']);
+
+      // Collect all unique field names from the lead payload to track on the category
+      const extractFields = (item) => Object.keys(item).filter(k => !EXCLUDED_FIELDS.has(k));
+
       // Build filter for merge-based upsert: scoped to acctId + specified merge fields present in the item
       const buildMergeFilter = (item) => {
         if (!mergeProperties?.length) return {};
@@ -45,7 +50,9 @@ class LeadService {
 
       // Create / upsert lead(s)
       let leadResult;
+      let newFields = [];
       if (Array.isArray(leadData)) {
+        newFields = [...new Set(leadData.flatMap(extractFields))];
         if (mergeProperties?.length) {
           // Single bulkWrite round-trip for array + merge: one network call for all writes
           const ops = leadData.map(item => {
@@ -63,8 +70,17 @@ class LeadService {
           leadResult = results.map(r => r.doc);
         }
       } else {
+        newFields = extractFields(leadData);
         const result = await performUpsert(Lead, buildMergeFilter(leadData), addCategoryId({ ...leadData, acctId }));
         leadResult = result.doc;
+      }
+
+      // Track field names on the category document (non-blocking)
+      if (newFields.length > 0) {
+        LeadCategory.updateOne(
+          { _id: categoryId },
+          { $addToSet: { fields: { $each: newFields } } }
+        ).catch(err => console.error('[LeadService] Failed to update category fields:', err));
       }
 
       return { lead: leadResult, category: { data: categoryDoc } };
@@ -119,7 +135,7 @@ class LeadService {
       const sort = { [sortBy]: sortOrder };
 
       const [getResult, total] = await Promise.all([
-        performGet(Lead, query, [], { sort, skip, limit, select: '-createdAt -updatedAt' }),
+        performGet(Lead, query, [], { sort, skip, limit }),
         performCount(Lead, query)
       ]);
 
@@ -238,6 +254,25 @@ class LeadService {
     } catch (error) {
       console.error('Error getting lead categories:', error);
       throw new Error(`Failed to get lead categories: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get all unique field names per category — reads directly from LeadCategory.fields.
+   * Fields are populated by: backfillFields.js script (one-time) + $addToSet on createLead (ongoing).
+   */
+  async getFieldsByCategory(acctId) {
+    try {
+      const categories = await LeadCategory.find({ acctId }).lean();
+      return categories.map(cat => ({
+        categoryId: cat._id,
+        categoryName: cat.categoryName,
+        default: cat.default,
+        fields: [...(cat.fields || []), 'createdAt', 'updatedAt']
+      }));
+    } catch (error) {
+      console.error('Error getting fields by category:', error);
+      throw new Error(`Failed to get fields: ${error.message}`);
     }
   }
 

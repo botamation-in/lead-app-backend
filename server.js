@@ -30,7 +30,7 @@ if (hasAWSCredentials) {
 }
 
 const app = express();
-const PORT = process.env.SERVER_PORT || process.env.PORT || 8081;
+const PORT = process.env.PORT || 8081;
 
 // Parse allowed origins from environment variable
 const allowedOrigins = process.env.ALLOWED_ORIGINS
@@ -125,16 +125,7 @@ app.use((err, req, res, next) => {
 
 // Start server
 app.listen(PORT, () => {
-  const env = process.env.NODE_ENV || 'unknown';
-  const domain = process.env.COOKIE_DOMAIN || 'localhost';
-  console.log('');
-  console.log('+--------------------------------------------+');
-  console.log('|   Lead App Service Running                 |');
-  console.log('+--------------------------------------------+');
-  console.log('|   Environment: ' + env.padEnd(28) + '|');
-  console.log('|   Port:        ' + String(PORT).padEnd(28) + '|');
-  console.log('|   Domain:      ' + domain.padEnd(28) + '|');
-  console.log('+--------------------------------------------+');
+  console.log(`Server is running on port ${PORT}`);
 });
 
 export default app;

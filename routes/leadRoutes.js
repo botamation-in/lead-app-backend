@@ -6,6 +6,8 @@ const router = express.Router();
 
 router.get('/categories', leadController.getCategories.bind(leadController));
 
+router.get('/fields', leadController.getFields.bind(leadController));
+
 router.put('/categories/:categoryId/default', leadController.setDefaultCategory.bind(leadController));
 
 router.post('/category/:category', leadController.createLead.bind(leadController));
