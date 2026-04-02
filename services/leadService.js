@@ -20,25 +20,45 @@ class LeadService {
     try {
       const categoryName = category || 'default';
 
-      // Single atomic find-or-create: hits the unique index { acctId, categoryName }.
-      // $setOnInsert only applies on insert — existing docs are returned unchanged with no extra writes.
-      const existingCategoryCount = await LeadCategory.countDocuments({ acctId });
-      const isFirstCategory = existingCategoryCount === 0;
-      const categoryDoc = await LeadCategory.findOneAndUpdate(
-        { acctId, categoryName },
-        { $setOnInsert: { acctId, categoryName, default: isFirstCategory } },
-        { upsert: true, new: true }
-      );
-
-      const categoryId = categoryDoc._id;
-      const addCategoryId = (item) => ({ ...item, categoryId });
-
       const EXCLUDED_FIELDS = new Set(['_id', 'acctId', 'categoryId', '__v', 'createdAt', 'updatedAt', 'category']);
-
-      // Collect all unique field names from the lead payload to track on the category
       const extractFields = (item) => Object.keys(item).filter(k => !EXCLUDED_FIELDS.has(k));
 
-      // Build filter for merge-based upsert: scoped to acctId + specified merge fields present in the item
+      // Compute new fields from payload upfront — required before the category query so we can
+      // merge the $addToSet into the same round-trip as find-or-create (saves 1–2 DB calls).
+      const newFields = Array.isArray(leadData)
+        ? [...new Set(leadData.flatMap(extractFields))]
+        : extractFields(leadData);
+
+      // Query 1 of 2 (was 3 of 4):
+      // Find-or-create category AND track field names — single round-trip.
+      // $setOnInsert fires only on new docs; $addToSet is a safe no-op if fields already exist.
+      const rawCatResult = await LeadCategory.findOneAndUpdate(
+        { acctId, categoryName },
+        {
+          $setOnInsert: { acctId, categoryName, default: false },
+          ...(newFields.length > 0 && { $addToSet: { fields: { $each: newFields } } })
+        },
+        { upsert: true, new: true, rawResult: true }
+      );
+
+      const categoryDoc = rawCatResult.value;
+      const categoryId = categoryDoc._id;
+
+      // If this was a brand-new category, async-check if it's the first for the account
+      // and mark it as default. Non-blocking — does not delay the lead insert response.
+      if (!rawCatResult.lastErrorObject?.updatedExisting) {
+        LeadCategory.countDocuments({ acctId })
+          .then(count => {
+            if (count === 1) {
+              return LeadCategory.updateOne({ _id: categoryId }, { $set: { default: true } });
+            }
+          })
+          .catch(err => console.error('[LeadService] Failed to set default category:', err));
+      }
+
+      const addCategoryId = (item) => ({ ...item, categoryId });
+
+      // Build filter for merge-based upsert: scoped to acctId + specified merge fields
       const buildMergeFilter = (item) => {
         if (!mergeProperties?.length) return {};
         const filter = { acctId };
@@ -48,11 +68,9 @@ class LeadService {
         return filter;
       };
 
-      // Create / upsert lead(s)
+      // Query 2 of 2 (was 4 of 4): Insert lead(s)
       let leadResult;
-      let newFields = [];
       if (Array.isArray(leadData)) {
-        newFields = [...new Set(leadData.flatMap(extractFields))];
         if (mergeProperties?.length) {
           // Single bulkWrite round-trip for array + merge: one network call for all writes
           const ops = leadData.map(item => {
@@ -70,17 +88,8 @@ class LeadService {
           leadResult = results.map(r => r.doc);
         }
       } else {
-        newFields = extractFields(leadData);
         const result = await performUpsert(Lead, buildMergeFilter(leadData), addCategoryId({ ...leadData, acctId }));
         leadResult = result.doc;
-      }
-
-      // Track field names on the category document (non-blocking)
-      if (newFields.length > 0) {
-        LeadCategory.updateOne(
-          { _id: categoryId },
-          { $addToSet: { fields: { $each: newFields } } }
-        ).catch(err => console.error('[LeadService] Failed to update category fields:', err));
       }
 
       return { lead: leadResult, category: { data: categoryDoc } };
@@ -114,10 +123,14 @@ class LeadService {
         query.categoryId = categoryId;
       }
 
-      // Apply any extra field filters dynamically as case-insensitive regex
+      // Apply any extra field filters dynamically.
+      // Numeric values use exact match; strings use case-insensitive regex.
       for (const [key, value] of Object.entries(rest)) {
         if (value !== undefined && value !== null && value !== '') {
-          query[key] = { $regex: value, $options: 'i' };
+          const numeric = Number(value);
+          query[key] = !isNaN(numeric) && value !== ''
+            ? numeric
+            : { $regex: value, $options: 'i' };
         }
       }
 
@@ -134,9 +147,13 @@ class LeadService {
       const skip = (page - 1) * limit;
       const sort = { [sortBy]: sortOrder };
 
-      const [getResult, total] = await Promise.all([
+      // Fetch leads, total count, and category fields in one parallel round-trip
+      const [getResult, total, categoryDoc] = await Promise.all([
         performGet(Lead, query, [], { sort, skip, limit }),
-        performCount(Lead, query)
+        performCount(Lead, query),
+        categoryId
+          ? LeadCategory.findOne({ _id: categoryId }, { fields: 1 }).lean()
+          : Promise.resolve(null)
       ]);
 
       // Enrich leads with admin name and profileImage
@@ -159,6 +176,7 @@ class LeadService {
 
       return {
         data: enrichedLeads,
+        categoryFields: categoryDoc?.fields ?? [],
         pagination: {
           total,
           page,
