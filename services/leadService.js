@@ -1,7 +1,6 @@
 import Lead from '../models/leadModel.js';
 import LeadCategory from '../models/leadCategoryModel.js';
 import Account from '../models/accountModel.js';
-import AccountAdmin from '../models/accountAdminModel.js';
 import mongoose from 'mongoose';
 import {
   performUpsert,
@@ -147,36 +146,85 @@ class LeadService {
       const skip = (page - 1) * limit;
       const sort = { [sortBy]: sortOrder };
 
-      // Fetch leads, total count, and category fields in one parallel round-trip
-      const [getResult, total, categoryDoc] = await Promise.all([
-        performGet(Lead, query, [], { sort, skip, limit }),
-        performCount(Lead, query),
-        categoryId
-          ? LeadCategory.findOne({ _id: categoryId }, { fields: 1 }).lean()
-          : Promise.resolve(null)
-      ]);
+      // Single aggregation — 1 query total.
+      // $facet runs 3 branches in one round-trip:
+      //   data          → sort + paginate + $lookup admin name/image
+      //   total         → count matched docs
+      //   categoryFields→ uncorrelated $lookup on leadcategories (only when categoryId given)
+      const pipeline = [
+        { $match: query },
+        {
+          $facet: {
+            data: [
+              { $sort: sort },
+              { $skip: skip },
+              { $limit: limit },
+              {
+                $lookup: {
+                  from: 'accountadmins',
+                  localField: 'adminId',
+                  foreignField: 'adminId',
+                  as: '_adminArr'
+                }
+              },
+              {
+                $addFields: {
+                  adminName: {
+                    $let: {
+                      vars: {
+                        fn: { $ifNull: [{ $arrayElemAt: ['$_adminArr.firstName', 0] }, ''] },
+                        ln: { $ifNull: [{ $arrayElemAt: ['$_adminArr.lastName', 0] }, ''] }
+                      },
+                      in: {
+                        $cond: {
+                          if: { $or: [{ $ne: ['$$fn', ''] }, { $ne: ['$$ln', ''] }] },
+                          then: { $trim: { input: { $concat: ['$$fn', ' ', '$$ln'] } } },
+                          else: null
+                        }
+                      }
+                    }
+                  },
+                  adminProfileImage: { $ifNull: [{ $arrayElemAt: ['$_adminArr.profileImage', 0] }, null] }
+                }
+              },
+              { $project: { _adminArr: 0 } }
+            ],
+            total: [{ $count: 'count' }],
+            ...(categoryId && {
+              categoryFields: [
+                { $limit: 1 },
+                {
+                  $lookup: {
+                    from: 'leadcategories',
+                    pipeline: [
+                      { $match: { _id: categoryId } },
+                      { $project: { _id: 0, fields: 1 } }
+                    ],
+                    as: '_catDoc'
+                  }
+                },
+                {
+                  $project: {
+                    _id: 0,
+                    fields: { $ifNull: [{ $arrayElemAt: ['$_catDoc.fields', 0] }, []] }
+                  }
+                }
+              ]
+            })
+          }
+        }
+      ];
 
-      // Enrich leads with admin name and profileImage
-      const leads = getResult.data || [];
-      const adminIds = [...new Set(leads.map(l => l.adminId).filter(Boolean))];
-      let adminMap = {};
-      if (adminIds.length > 0) {
-        const adminResult = await performGet(AccountAdmin, { adminId: { $in: adminIds } });
-        (adminResult.data || []).forEach(a => {
-          adminMap[a.adminId] = {
-            adminName: [a.firstName, a.lastName].filter(Boolean).join(' ') || null,
-            adminProfileImage: a.profileImage || null
-          };
-        });
-      }
-      const enrichedLeads = leads.map(lead => {
-        const info = lead.adminId ? (adminMap[lead.adminId] || {}) : {};
-        return { ...(lead.toObject?.() ?? lead), ...info };
-      });
+      // 1 query — everything resolved in a single aggregation round-trip
+      const [aggResult] = await Lead.aggregate(pipeline).option({ allowDiskUse: true });
+
+      const leads = aggResult?.data ?? [];
+      const total = aggResult?.total?.[0]?.count ?? 0;
+      const catFields = aggResult?.categoryFields?.[0]?.fields ?? [];
 
       return {
-        data: enrichedLeads,
-        categoryFields: categoryDoc?.fields ?? [],
+        data: leads,
+        categoryFields: catFields,
         pagination: {
           total,
           page,
