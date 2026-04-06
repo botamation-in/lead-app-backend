@@ -42,6 +42,7 @@ export const apiKeyAuthMiddleware = async (req, res, next) => {
         }
         const acctNo = acctNoCandidates[0];
 
+        //TODO: Add caching layer here if needed to reduce DB load for repeated requests with the same apiKey + acctNo
         // 5️⃣ Single query: match apiKey + join Account to verify acctNo — replaces 2 separate queries
         const results = await performAggregate(accountApiKeyModel, [
             { $match: { apiKey } },
