@@ -220,7 +220,14 @@ class LeadService {
 
       const leads = aggResult?.data ?? [];
       const total = aggResult?.total?.[0]?.count ?? 0;
-      const catFields = aggResult?.categoryFields?.[0]?.fields ?? [];
+      let catFields = aggResult?.categoryFields?.[0]?.fields ?? [];
+
+      // If the category doc has no fields tracked yet, derive order from the first lead's
+      // key order (BSON insertion order) — excluding internal and aggregation-injected fields.
+      if (catFields.length === 0 && leads.length > 0) {
+        const EXCLUDE = new Set(['_id', 'acctId', 'categoryId', '__v', 'adminName', 'adminProfileImage']);
+        catFields = Object.keys(leads[0]).filter(k => !EXCLUDE.has(k));
+      }
 
       return {
         data: leads,
