@@ -31,6 +31,8 @@ const leadCategorySchema = new mongoose.Schema(
 leadCategorySchema.index({ acctId: 1 });
 leadCategorySchema.index({ acctId: 1, categoryName: 1 }, { unique: true });
 
+leadCategorySchema.set('collection', 'lead_categories');
+
 const LeadCategory = mongoose.model('LeadCategory', leadCategorySchema);
 
 export default LeadCategory;
