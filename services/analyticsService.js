@@ -23,7 +23,7 @@ class AnalyticsService {
                 matchStage.categoryId = categoryId;
             }
 
-            // Filter by date if provided
+            // Filter by date range on updatedAt
             if (dateFilter && (dateFilter.from || dateFilter.to)) {
                 const dateMatch = {};
                 if (dateFilter.from) dateMatch.$gte = dateFilter.from;
@@ -101,12 +101,21 @@ class AnalyticsService {
      * @private
      */
     _getAggregationExpression(aggregation, field) {
+        // For numeric aggregations, wrap in $toDouble so string-encoded numbers
+        // (e.g. phone stored as "9000000001") are handled — and non-numeric strings
+        // coerce to null which $sum/$avg ignores (falls back to 0/count behaviour).
+        // Use count for pure categorical yAxis fields.
+        const numericAggregations = ['sum', 'avg', 'min', 'max'];
+        const fieldExpr = numericAggregations.includes(aggregation)
+            ? { $toDouble: `$${field}` }
+            : `$${field}`;
+
         const expressions = {
             count: { $sum: 1 },
-            sum: { $sum: `$${field}` },
-            avg: { $avg: `$${field}` },
-            min: { $min: `$${field}` },
-            max: { $max: `$${field}` }
+            sum: { $sum: fieldExpr },
+            avg: { $avg: fieldExpr },
+            min: { $min: fieldExpr },
+            max: { $max: fieldExpr }
         };
 
         return expressions[aggregation] || { $sum: 1 };

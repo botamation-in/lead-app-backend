@@ -1,7 +1,6 @@
 import Lead from '../models/leadModel.js';
 import LeadCategory from '../models/leadCategoryModel.js';
 import Account from '../models/accountModel.js';
-import AccountAdmin from '../models/accountAdminModel.js';
 import mongoose from 'mongoose';
 import {
   performUpsert,
@@ -20,20 +19,45 @@ class LeadService {
     try {
       const categoryName = category || 'default';
 
-      // Single atomic find-or-create: hits the unique index { acctId, categoryName }.
-      // $setOnInsert only applies on insert — existing docs are returned unchanged with no extra writes.
-      const existingCategoryCount = await LeadCategory.countDocuments({ acctId });
-      const isFirstCategory = existingCategoryCount === 0;
-      const categoryDoc = await LeadCategory.findOneAndUpdate(
+      const EXCLUDED_FIELDS = new Set(['_id', 'acctId', 'categoryId', '__v', 'createdAt', 'updatedAt', 'category']);
+      const extractFields = (item) => Object.keys(item).filter(k => !EXCLUDED_FIELDS.has(k));
+
+      // Compute new fields from payload upfront — required before the category query so we can
+      // merge the $addToSet into the same round-trip as find-or-create (saves 1–2 DB calls).
+      const newFields = Array.isArray(leadData)
+        ? [...new Set(leadData.flatMap(extractFields))]
+        : extractFields(leadData);
+
+      // Query 1 of 2 (was 3 of 4):
+      // Find-or-create category AND track field names — single round-trip.
+      // $setOnInsert fires only on new docs; $addToSet is a safe no-op if fields already exist.
+      const rawCatResult = await LeadCategory.findOneAndUpdate(
         { acctId, categoryName },
-        { $setOnInsert: { acctId, categoryName, default: isFirstCategory } },
-        { upsert: true, new: true }
+        {
+          $setOnInsert: { acctId, categoryName, default: false },
+          ...(newFields.length > 0 && { $addToSet: { fields: { $each: newFields } } })
+        },
+        { upsert: true, new: true, rawResult: true }
       );
 
+      const categoryDoc = rawCatResult.value;
       const categoryId = categoryDoc._id;
+
+      // If this was a brand-new category, async-check if it's the first for the account
+      // and mark it as default. Non-blocking — does not delay the lead insert response.
+      if (!rawCatResult.lastErrorObject?.updatedExisting) {
+        LeadCategory.countDocuments({ acctId })
+          .then(count => {
+            if (count === 1) {
+              return LeadCategory.updateOne({ _id: categoryId }, { $set: { default: true } });
+            }
+          })
+          .catch(err => console.error('[LeadService] Failed to set default category:', err));
+      }
+
       const addCategoryId = (item) => ({ ...item, categoryId });
 
-      // Build filter for merge-based upsert: scoped to acctId + specified merge fields present in the item
+      // Build filter for merge-based upsert: scoped to acctId + specified merge fields
       const buildMergeFilter = (item) => {
         if (!mergeProperties?.length) return {};
         const filter = { acctId };
@@ -43,7 +67,7 @@ class LeadService {
         return filter;
       };
 
-      // Create / upsert lead(s)
+      // Query 2 of 2 (was 4 of 4): Insert lead(s)
       let leadResult;
       if (Array.isArray(leadData)) {
         if (mergeProperties?.length) {
@@ -98,10 +122,14 @@ class LeadService {
         query.categoryId = categoryId;
       }
 
-      // Apply any extra field filters dynamically as case-insensitive regex
+      // Apply any extra field filters dynamically.
+      // Numeric values use exact match; strings use case-insensitive regex.
       for (const [key, value] of Object.entries(rest)) {
         if (value !== undefined && value !== null && value !== '') {
-          query[key] = { $regex: value, $options: 'i' };
+          const numeric = Number(value);
+          query[key] = !isNaN(numeric) && value !== ''
+            ? numeric
+            : { $regex: value, $options: 'i' };
         }
       }
 
@@ -118,31 +146,85 @@ class LeadService {
       const skip = (page - 1) * limit;
       const sort = { [sortBy]: sortOrder };
 
-      const [getResult, total] = await Promise.all([
-        performGet(Lead, query, [], { sort, skip, limit, select: '-createdAt -updatedAt' }),
-        performCount(Lead, query)
-      ]);
+      // Single aggregation — 1 query total.
+      // $facet runs 3 branches in one round-trip:
+      //   data          → sort + paginate + $lookup admin name/image
+      //   total         → count matched docs
+      //   categoryFields→ uncorrelated $lookup on leadcategories (only when categoryId given)
+      const pipeline = [
+        { $match: query },
+        {
+          $facet: {
+            data: [
+              { $sort: sort },
+              { $skip: skip },
+              { $limit: limit },
+              {
+                $lookup: {
+                  from: 'accountadmins',
+                  localField: 'adminId',
+                  foreignField: 'adminId',
+                  as: '_adminArr'
+                }
+              },
+              {
+                $addFields: {
+                  adminName: {
+                    $let: {
+                      vars: {
+                        fn: { $ifNull: [{ $arrayElemAt: ['$_adminArr.firstName', 0] }, ''] },
+                        ln: { $ifNull: [{ $arrayElemAt: ['$_adminArr.lastName', 0] }, ''] }
+                      },
+                      in: {
+                        $cond: {
+                          if: { $or: [{ $ne: ['$$fn', ''] }, { $ne: ['$$ln', ''] }] },
+                          then: { $trim: { input: { $concat: ['$$fn', ' ', '$$ln'] } } },
+                          else: null
+                        }
+                      }
+                    }
+                  },
+                  adminProfileImage: { $ifNull: [{ $arrayElemAt: ['$_adminArr.profileImage', 0] }, null] }
+                }
+              },
+              { $project: { _adminArr: 0 } }
+            ],
+            total: [{ $count: 'count' }],
+            ...(categoryId && {
+              categoryFields: [
+                { $limit: 1 },
+                {
+                  $lookup: {
+                    from: 'leadcategories',
+                    pipeline: [
+                      { $match: { _id: categoryId } },
+                      { $project: { _id: 0, fields: 1 } }
+                    ],
+                    as: '_catDoc'
+                  }
+                },
+                {
+                  $project: {
+                    _id: 0,
+                    fields: { $ifNull: [{ $arrayElemAt: ['$_catDoc.fields', 0] }, []] }
+                  }
+                }
+              ]
+            })
+          }
+        }
+      ];
 
-      // Enrich leads with admin name and profileImage
-      const leads = getResult.data || [];
-      const adminIds = [...new Set(leads.map(l => l.adminId).filter(Boolean))];
-      let adminMap = {};
-      if (adminIds.length > 0) {
-        const adminResult = await performGet(AccountAdmin, { adminId: { $in: adminIds } });
-        (adminResult.data || []).forEach(a => {
-          adminMap[a.adminId] = {
-            adminName: [a.firstName, a.lastName].filter(Boolean).join(' ') || null,
-            adminProfileImage: a.profileImage || null
-          };
-        });
-      }
-      const enrichedLeads = leads.map(lead => {
-        const info = lead.adminId ? (adminMap[lead.adminId] || {}) : {};
-        return { ...(lead.toObject?.() ?? lead), ...info };
-      });
+      // 1 query — everything resolved in a single aggregation round-trip
+      const [aggResult] = await Lead.aggregate(pipeline).option({ allowDiskUse: true });
+
+      const leads = aggResult?.data ?? [];
+      const total = aggResult?.total?.[0]?.count ?? 0;
+      const catFields = aggResult?.categoryFields?.[0]?.fields ?? [];
 
       return {
-        data: enrichedLeads,
+        data: leads,
+        categoryFields: catFields,
         pagination: {
           total,
           page,
@@ -238,6 +320,25 @@ class LeadService {
     } catch (error) {
       console.error('Error getting lead categories:', error);
       throw new Error(`Failed to get lead categories: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get all unique field names per category — reads directly from LeadCategory.fields.
+   * Fields are populated by: backfillFields.js script (one-time) + $addToSet on createLead (ongoing).
+   */
+  async getFieldsByCategory(acctId) {
+    try {
+      const categories = await LeadCategory.find({ acctId }).lean();
+      return categories.map(cat => ({
+        categoryId: cat._id,
+        categoryName: cat.categoryName,
+        default: cat.default,
+        fields: [...(cat.fields || []), 'createdAt', 'updatedAt']
+      }));
+    } catch (error) {
+      console.error('Error getting fields by category:', error);
+      throw new Error(`Failed to get fields: ${error.message}`);
     }
   }
 

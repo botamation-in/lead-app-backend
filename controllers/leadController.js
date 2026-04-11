@@ -1,9 +1,11 @@
 import leadService from '../services/leadService.js';
+import { addToQueue } from '../queue/leadQueue.js';
 
 class LeadController {
   /**
    * Create new lead(s)
-   * POST /api/leads
+   * POST /api/leads        — API key path  → queued  (202 Accepted)
+   * POST /api/ui/leads     — SSO path      → synchronous (201 Created + data)
    */
   async createLead(req, res) {
     try {
@@ -35,6 +37,27 @@ class LeadController {
         ? data.map(({ category: _, ...rest }) => rest)
         : (({ category: _, ...rest }) => rest)(data);
 
+      // ── Path split ──────────────────────────────────────────────────────────
+      // req.user is only set by ssoAuthMiddleware.
+      // req.acctId (without req.user) is set only by apiKeyAuthMiddleware.
+      // API key callers get async queue processing; SSO/UI callers stay synchronous.
+      const isApiKeyRequest = !req.user && !!req.acctId;
+
+      if (isApiKeyRequest) {
+        // ── Async path (API key) ─────────────────────────────────────────────
+        // Enqueue and return 202 immediately — the worker handles the DB write.
+        const job = await addToQueue({ acctId, leadPayload, category, mergeProperties });
+
+        return res.status(202).json({
+          success: true,
+          message: Array.isArray(leadPayload)
+            ? `${leadPayload.length} lead(s) queued for processing`
+            : 'Lead queued for processing',
+          jobId: job.id
+        });
+      }
+
+      // ── Synchronous path (SSO / UI) ──────────────────────────────────────
       const result = await leadService.createLead(leadPayload, acctId, category, mergeProperties);
 
       return res.status(201).json({
@@ -189,6 +212,25 @@ class LeadController {
         success: false,
         message: error.message
       });
+    }
+  }
+
+  /**
+   * Get all unique field names per category
+   * GET /api/ui/leads/fields?acctId=
+   */
+  async getFields(req, res) {
+    try {
+      const acctId = req.user?.acctId || req.acctId || req.query.acctId || req.headers['x-acctno'];
+      if (!acctId) {
+        return res.status(400).json({ success: false, message: 'acctId is required' });
+      }
+
+      const data = await leadService.getFieldsByCategory(acctId);
+      return res.status(200).json({ success: true, categories: data });
+    } catch (error) {
+      console.error('Error in getFields:', error);
+      return res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }
   }
 

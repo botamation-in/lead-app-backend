@@ -9,7 +9,11 @@ import accountRoutes from './routes/accountRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
 import ssoAuthMiddleware from './middleware/ssoAuthMiddleware.js';
 import { apiKeyAuthMiddleware } from './middleware/apiKeyAuthMiddleware.js';
+import leadRateLimiter from './middleware/leadRateLimiter.js';
 import { loadSecretsFromAWS } from './config/secretsManager.js';
+import { initializeRedis, closeRedisConnection, isRedisHealthy } from './config/redisConnector.js';
+import { shutdownAll as shutdownAllQueues, getRegisteredQueues } from './config/queueManager.js';
+import { initializeWorker as initLeadWorker, getHealth as getLeadQueueHealth } from './queue/leadQueue.js';
 
 // AWS Secrets Manager - loads secrets into process.env
 const hasAWSCredentials = process.env.AWS_SECRET_MANAGER_ACCESS_KEY_ID &&
@@ -30,7 +34,7 @@ if (hasAWSCredentials) {
 }
 
 const app = express();
-const PORT = process.env.SERVER_PORT || process.env.PORT || 8081;
+const PORT = process.env.PORT || 8081;
 
 // Parse allowed origins from environment variable
 const allowedOrigins = process.env.ALLOWED_ORIGINS
@@ -79,6 +83,21 @@ mongoConnector.connect()
     process.exit(1);
   });
 
+// ── Redis + Queue initialization ───────────────────────────────────────────
+// Run sequentially: Redis must be ready before the worker can connect.
+(async () => {
+  try {
+    await initializeRedis();
+    console.log('[Startup] Redis initialized successfully');
+
+    initLeadWorker();
+    console.log('[Startup] Lead queue worker started | active queues:', getRegisteredQueues().join(', '));
+  } catch (error) {
+    console.error('[Startup] FATAL: Failed to initialize Redis / queue worker:', error.message);
+    process.exit(1);
+  }
+})();
+
 // SSO Routes
 app.use('/api/sso', ssoRoutes);
 
@@ -103,14 +122,26 @@ app.use('/api/ui/accounts', ssoAuthMiddleware, accountRoutes);
 // Admin Routes — SSO required
 app.use('/api/ui/admins', ssoAuthMiddleware, adminRoutes);
 
-app.use('/api/leads', apiKeyAuthMiddleware, leadRoutes);
+// API key path: auth → rate limit (100 req/60s per acctId) → routes
+// Rate limiter runs after auth so req.acctId is already set.
+app.use('/api/leads', apiKeyAuthMiddleware, leadRateLimiter, leadRoutes);
 app.use('/api/ui/leads', ssoAuthMiddleware, leadRoutes);
 
 app.use('/api/ui/analytics', ssoAuthMiddleware, analyticsRoutes);
 
 // Health check route
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'OK', message: 'Server is running' });
+app.get('/health', async (req, res) => {
+  const redisHealthy = await isRedisHealthy();
+  const activeQueues = getRegisteredQueues();
+  const leadQueueHealth = await getLeadQueueHealth();
+
+  res.status(200).json({
+    status: 'OK',
+    message: 'Server is running',
+    redis: redisHealthy ? 'connected' : 'disconnected',
+    queues: activeQueues,
+    leadQueue: leadQueueHealth
+  });
 });
 
 // Error handling middleware
@@ -123,18 +154,38 @@ app.use((err, req, res, next) => {
   });
 });
 
+// ── Graceful shutdown ──────────────────────────────────────────────────────
+const gracefulShutdown = async (signal) => {
+  console.log(`[Shutdown] ${signal} received — starting graceful shutdown...`);
+  try {
+    await shutdownAllQueues();
+    console.log('[Shutdown] All queue workers closed');
+
+    await closeRedisConnection();
+    console.log('[Shutdown] Redis connection closed');
+
+    server.close(() => {
+      console.log('[Shutdown] HTTP server closed');
+      process.exit(0);
+    });
+
+    // Force-exit after 10 s if graceful shutdown stalls
+    setTimeout(() => {
+      console.warn('[Shutdown] Forcing exit after timeout');
+      process.exit(1);
+    }, 10000);
+  } catch (error) {
+    console.error('[Shutdown] Error during graceful shutdown:', error.message);
+    process.exit(1);
+  }
+};
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
+
 // Start server
-app.listen(PORT, () => {
-  const env = process.env.NODE_ENV || 'unknown';
-  const domain = process.env.COOKIE_DOMAIN || 'localhost';
-  console.log('');
-  console.log('+--------------------------------------------+');
-  console.log('|   Lead App Service Running                 |');
-  console.log('+--------------------------------------------+');
-  console.log('|   Environment: ' + env.padEnd(28) + '|');
-  console.log('|   Port:        ' + String(PORT).padEnd(28) + '|');
-  console.log('|   Domain:      ' + domain.padEnd(28) + '|');
-  console.log('+--------------------------------------------+');
+const server = app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
 });
 
 export default app;

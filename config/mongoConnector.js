@@ -52,6 +52,7 @@ export async function performGet(Model, query, populate = [], options = {}) {
   if (sort) q = q.sort(sort);
   if (skip != null) q = q.skip(skip);
   if (limit != null) q = q.limit(limit);
+  q = q.lean();
   const data = await q;
   return { success: true, data };
 }

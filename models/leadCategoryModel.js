@@ -17,6 +17,10 @@ const leadCategorySchema = new mongoose.Schema(
         default: {
             type: Boolean,
             default: false
+        },
+        fields: {
+            type: [String],
+            default: []
         }
     },
     {
