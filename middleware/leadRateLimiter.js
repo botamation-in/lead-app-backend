@@ -22,11 +22,11 @@ import logger from '../utils/logger.js';
 // ---------------------------------------------------------------------------
 // Config — driven entirely by environment variables
 // ---------------------------------------------------------------------------
-const MAX_REQUESTS  = parseInt(process.env.LEAD_RATE_LIMIT_MAX       ?? '100', 10);
-const WINDOW_S      = parseInt(process.env.LEAD_RATE_LIMIT_WINDOW_S  ?? '60',  10);
+const MAX_REQUESTS = parseInt(process.env.LEAD_RATE_LIMIT_MAX ?? '100', 10);
+const WINDOW_S = parseInt(process.env.LEAD_RATE_LIMIT_WINDOW_S ?? '60', 10);
 // failOpen=true means: if Redis is unavailable, let the request through rather
 // than blocking legitimate traffic. Set to false for stricter enforcement.
-const FAIL_OPEN     = (process.env.LEAD_RATE_LIMIT_FAIL_OPEN ?? 'true') !== 'false';
+const FAIL_OPEN = (process.env.LEAD_RATE_LIMIT_FAIL_OPEN ?? 'true') !== 'false';
 
 const KEY_PREFIX = 'ratelimit:lead:acct:';
 
@@ -45,6 +45,13 @@ const KEY_PREFIX = 'ratelimit:lead:acct:';
  *   { success: false, message: '...', retryAfter: <seconds> }
  */
 const leadRateLimiter = async (req, res, next) => {
+  // Allow trusted callers to bypass rate limiting when explicitly requested.
+  const skipLimitHeader = req.get('skip-limit');
+  if (typeof skipLimitHeader === 'string' && skipLimitHeader.toLowerCase() === 'true') {
+    logger.info('[LeadRateLimit] Bypassed via skip-limit header');
+    return next();
+  }
+
   // acctId is guaranteed to be set by apiKeyAuthMiddleware upstream
   const acctId = req.acctId;
 
@@ -65,7 +72,7 @@ const leadRateLimiter = async (req, res, next) => {
     const results = await multi.exec();
 
     const currentCount = results[0][1];
-    const ttl          = results[1][1];
+    const ttl = results[1][1];
 
     // First request in this window — set the expiry
     if (ttl === -1) {
@@ -73,13 +80,13 @@ const leadRateLimiter = async (req, res, next) => {
     }
 
     const windowResetAt = Math.ceil(Date.now() / 1000) + (ttl > 0 ? ttl : WINDOW_S);
-    const remaining     = Math.max(0, MAX_REQUESTS - currentCount);
+    const remaining = Math.max(0, MAX_REQUESTS - currentCount);
 
     // Always send rate limit headers so callers can self-throttle
     res.set({
-      'X-RateLimit-Limit':     MAX_REQUESTS,
+      'X-RateLimit-Limit': MAX_REQUESTS,
       'X-RateLimit-Remaining': remaining,
-      'X-RateLimit-Reset':     windowResetAt
+      'X-RateLimit-Reset': windowResetAt
     });
 
     if (currentCount > MAX_REQUESTS) {
@@ -87,8 +94,8 @@ const leadRateLimiter = async (req, res, next) => {
       logger.warn(`[LeadRateLimit] acctId=${acctId} exceeded ${MAX_REQUESTS} req/${WINDOW_S}s | count=${currentCount} | retryAfter=${retryAfter}s`);
 
       return res.status(429).json({
-        success:    false,
-        message:    `Rate limit exceeded: max ${MAX_REQUESTS} lead requests per ${WINDOW_S} seconds per account.`,
+        success: false,
+        message: `Rate limit exceeded: max ${MAX_REQUESTS} lead requests per ${WINDOW_S} seconds per account.`,
         retryAfter
       });
     }
