@@ -9,7 +9,7 @@ class AnalyticsController {
     try {
       // Support both POST (body) and GET (query params)
       const source = req.body && Object.keys(req.body).length ? req.body : req.query;
-      const { xAxis, yAxis, zAxis, aggregation, dateFrom, dateTo, categoryId, acctId: acctIdSource } = source;
+      const { xAxis, yAxis, zAxis, aggregation, dateFrom, dateTo, categoryId, acctId: acctIdSource, dateGranularity } = source;
 
       // Prefer acctId from the authenticated user's token; fall back to body/query param
       const acctId = req.user?.acctId || acctIdSource;
@@ -37,6 +37,10 @@ class AnalyticsController {
         });
       }
 
+      // Validate dateGranularity if provided
+      const validGranularities = ['hour', 'day', 'month', 'year'];
+      const resolvedGranularity = validGranularities.includes(dateGranularity) ? dateGranularity : null;
+
       // Parse and validate dates if provided
       let dateFilter = null;
       if (dateFrom || dateTo) {
@@ -60,7 +64,8 @@ class AnalyticsController {
         aggregation,
         dateFilter,
         acctId,
-        categoryId: categoryId || null
+        categoryId: categoryId || null,
+        dateGranularity: resolvedGranularity
       });
 
       return res.status(200).json({

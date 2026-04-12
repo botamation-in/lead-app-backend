@@ -22,6 +22,10 @@ leadSchema.index({ acctId: 1, categoryId: 1, updatedAt: -1 });
 // Fallback index: account-scoped queries without categoryId
 leadSchema.index({ acctId: 1, updatedAt: -1 });
 
+// Index for createdAt time-series analytics (xAxis = 'createdAt' with date filter)
+leadSchema.index({ acctId: 1, createdAt: -1 });
+leadSchema.index({ acctId: 1, categoryId: 1, createdAt: -1 });
+
 const Lead = mongoose.model('Lead', leadSchema);
 
 export default Lead;

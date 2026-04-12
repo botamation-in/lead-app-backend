@@ -1,60 +1,80 @@
 import Lead from '../models/leadModel.js';
 import { performAggregate } from '../config/mongoConnector.js';
 
+// Fields that store timestamps and support granularity bucketing
+const DATE_AXIS_FIELDS = ['createdAt', 'updatedAt'];
+
+// Maps granularity keys to MongoDB $dateToString format strings and sort-friendly output
+const GRANULARITY_FORMAT = {
+    hour:  '%Y-%m-%dT%H:00',   // e.g. "2025-04-12T14:00"
+    day:   '%Y-%m-%d',          // e.g. "2025-04-12"
+    month: '%Y-%m',             // e.g. "2025-04"
+    year:  '%Y',                // e.g. "2025"
+};
+
 class AnalyticsService {
     /**
      * Get chart data with grouping and aggregation
      * @param {Object} params - Query parameters
-     * @param {string} params.xAxis - Field to group by for X-axis (e.g., 'trainerName')
+     * @param {string} params.xAxis - Field to group by for X-axis (e.g., 'createdAt', 'trainerName')
      * @param {string} params.yAxis - Field to aggregate for Y-axis (e.g., 'memberName')
      * @param {string} params.aggregation - Aggregation type (count, sum, avg, min, max)
      * @param {Object} params.dateFilter - Optional date range filter { from: Date, to: Date }
+     * @param {string|null} params.dateGranularity - 'hour'|'day'|'month'|'year' — only used when xAxis is a date field
      * @returns {Promise<Array>} - Aggregated chart data
      */
-    async getChartData({ xAxis, yAxis, zAxis, aggregation, dateFilter, acctId, categoryId }) {
+    async getChartData({ xAxis, yAxis, zAxis, aggregation, dateFilter, acctId, categoryId, dateGranularity }) {
         try {
             const pipeline = [];
+            const isDateAxis = DATE_AXIS_FIELDS.includes(xAxis);
 
-            // Stage 1: Always filter by acctId
+            // ── Stage 1: $match ────────────────────────────────────────────────────────
             const matchStage = { acctId };
 
-            // Filter by categoryId if provided
             if (categoryId) {
                 matchStage.categoryId = categoryId;
             }
 
-            // Filter by date range on updatedAt
             if (dateFilter && (dateFilter.from || dateFilter.to)) {
                 const dateMatch = {};
                 if (dateFilter.from) dateMatch.$gte = dateFilter.from;
-                if (dateFilter.to) dateMatch.$lte = dateFilter.to;
-                matchStage.updatedAt = dateMatch;
+                if (dateFilter.to)   dateMatch.$lte = dateFilter.to;
+
+                // Apply the date range to the actual xAxis field when it is a date field,
+                // so that filtering by createdAt range works correctly when xAxis = 'createdAt'.
+                // Always also filter updatedAt to catch records updated in the window.
+                if (isDateAxis) {
+                    matchStage[xAxis] = dateMatch;
+                } else {
+                    matchStage.updatedAt = dateMatch;
+                }
             }
 
             pipeline.push({ $match: matchStage });
 
-            if (zAxis) {
-                // Grouped / Stacked mode: group by both xAxis and zAxis
-                // Returns [{name, zKey, value}] so the frontend can pivot into multi-series
+            // ── Build the xAxis group expression ──────────────────────────────────────
+            // When xAxis is a timestamp field, bucket by the chosen granularity using
+            // $dateToString so each bucket becomes a sortable string like "2025-04-12".
+            const fmt = isDateAxis && dateGranularity ? GRANULARITY_FORMAT[dateGranularity] : null;
+            const xGroupExpr = fmt
+                ? { $dateToString: { format: fmt, date: `$${xAxis}` } }
+                : `$${xAxis}`;
 
-                // Stage 2: Group by composite (xAxis + zAxis)
+            if (zAxis) {
+                // ── Grouped / Stacked mode ─────────────────────────────────────────────
                 pipeline.push({
                     $group: {
                         _id: {
-                            name: `$${xAxis}`,
+                            name: xGroupExpr,
                             zKey: `$${zAxis}`
                         },
                         value: this._getAggregationExpression(aggregation, yAxis)
                     }
                 });
 
-                // Stage 3: Sort by xAxis name then zKey for consistent ordering
+                // Sort chronologically for date axes, otherwise alphabetically
                 pipeline.push({ $sort: { '_id.name': 1, '_id.zKey': 1 } });
-
-                // Stage 4: Cap results
                 pipeline.push({ $limit: 500 });
-
-                // Stage 5: Project to {name, zKey, value}
                 pipeline.push({
                     $project: {
                         _id: 0,
@@ -64,22 +84,22 @@ class AnalyticsService {
                     }
                 });
             } else {
-                // Standard single-axis mode
-                // Stage 2: Group by xAxis and aggregate yAxis
+                // ── Standard single-axis mode ──────────────────────────────────────────
                 pipeline.push({
                     $group: {
-                        _id: `$${xAxis}`,
+                        _id: xGroupExpr,
                         value: this._getAggregationExpression(aggregation, yAxis)
                     }
                 });
 
-                // Stage 3: Sort by value descending so top results are returned first
-                pipeline.push({ $sort: { value: -1 } });
+                // For date axes sort chronologically (ascending); otherwise by value descending
+                if (isDateAxis && fmt) {
+                    pipeline.push({ $sort: { _id: 1 } });
+                } else {
+                    pipeline.push({ $sort: { value: -1 } });
+                }
 
-                // Stage 4: Cap at 50 groups to prevent massive payloads
-                pipeline.push({ $limit: 50 });
-
-                // Stage 5: Project to format the output
+                pipeline.push({ $limit: 500 });
                 pipeline.push({
                     $project: {
                         _id: 0,
@@ -112,10 +132,10 @@ class AnalyticsService {
 
         const expressions = {
             count: { $sum: 1 },
-            sum: { $sum: fieldExpr },
-            avg: { $avg: fieldExpr },
-            min: { $min: fieldExpr },
-            max: { $max: fieldExpr }
+            sum:   { $sum: fieldExpr },
+            avg:   { $avg: fieldExpr },
+            min:   { $min: fieldExpr },
+            max:   { $max: fieldExpr }
         };
 
         return expressions[aggregation] || { $sum: 1 };
