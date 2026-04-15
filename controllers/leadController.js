@@ -1,5 +1,13 @@
 import leadService from '../services/leadService.js';
 import { addToQueue } from '../queue/leadQueue.js';
+import UserAccount from '../models/userAccountModel.js';
+import { perfomDataExistanceCheck } from '../config/mongoConnector.js';
+
+const QUEUE_ENQUEUE_TIMEOUT_MS = parseInt(process.env.LEAD_QUEUE_ENQUEUE_TIMEOUT_MS ?? '3000', 10);
+const withTimeout = (promise, timeoutMs, message) => Promise.race([
+  promise,
+  new Promise((_, reject) => setTimeout(() => reject(new Error(message)), timeoutMs))
+]);
 
 class LeadController {
   /**
@@ -46,15 +54,35 @@ class LeadController {
       if (isApiKeyRequest) {
         // ── Async path (API key) ─────────────────────────────────────────────
         // Enqueue and return 202 immediately — the worker handles the DB write.
-        const job = await addToQueue({ acctId, leadPayload, category, mergeProperties });
+        // If queueing is unavailable, fall back to synchronous create to avoid hanging requests.
+        try {
+          const job = await withTimeout(
+            addToQueue({ acctId, leadPayload, category, mergeProperties }),
+            QUEUE_ENQUEUE_TIMEOUT_MS,
+            `Queue enqueue timed out after ${QUEUE_ENQUEUE_TIMEOUT_MS}ms`
+          );
 
-        return res.status(202).json({
-          success: true,
-          message: Array.isArray(leadPayload)
-            ? `${leadPayload.length} lead(s) queued for processing`
-            : 'Lead queued for processing',
-          jobId: job.id
-        });
+          return res.status(202).json({
+            success: true,
+            message: Array.isArray(leadPayload)
+              ? `${leadPayload.length} lead(s) queued for processing`
+              : 'Lead queued for processing',
+            jobId: job.id
+          });
+        } catch (queueError) {
+          console.warn('Queue unavailable, processing lead synchronously:', queueError.message);
+
+          const result = await leadService.createLead(leadPayload, acctId, category, mergeProperties);
+          return res.status(201).json({
+            success: true,
+            message: Array.isArray(leadPayload)
+              ? `${result.lead.length} leads created successfully (queue unavailable, processed synchronously)`
+              : 'Lead created successfully (queue unavailable, processed synchronously)',
+            data: result.lead,
+            ...(result.category && { category: result.category.data }),
+            queueFallback: true
+          });
+        }
       }
 
       // ── Synchronous path (SSO / UI) ──────────────────────────────────────
@@ -127,7 +155,55 @@ class LeadController {
    * PUT /api/leads/:id — identical behaviour to POST; :id segment is treated as the category
    */
   async updateLead(req, res) {
-    return this.createLead(req, res);
+    try {
+      const { id } = req.params;
+
+      // JWT may not carry acctId (multi-tenant).
+      // Fall back to query param or body, then verify the user belongs to that account.
+      let callerAcctId = req.user?.acctId || req.acctId;
+      if (!callerAcctId) {
+        const candidateAcctId = req.query.acctId || req.body?.acctId;
+        if (candidateAcctId && req.user?.userId) {
+          const linked = await perfomDataExistanceCheck(UserAccount, { userId: req.user.userId, acctId: candidateAcctId });
+          if (!linked) {
+            return res.status(403).json({ success: false, message: 'Access denied: you do not belong to the specified account' });
+          }
+          callerAcctId = candidateAcctId;
+        }
+      }
+      if (!callerAcctId) {
+        return res.status(400).json({ success: false, message: 'Authenticated account context is required' });
+      }
+
+      // Accept either { data: {...} } envelope or a flat body; strip routing-only fields from payload
+      const rawBody = req.body?.data ?? req.body;
+      const { acctId: _a, acctNo: _n, ...updateData } = rawBody || {};
+      if (!updateData || Object.keys(updateData).length === 0) {
+        return res.status(400).json({ success: false, message: 'No update data provided' });
+      }
+
+      const existing = await leadService.getLeadById(id);
+      if (!existing) {
+        return res.status(404).json({ success: false, message: 'Lead not found' });
+      }
+      if (existing.acctId !== callerAcctId) {
+        return res.status(403).json({ success: false, message: 'Access denied: lead does not belong to your account' });
+      }
+
+      const updated = await leadService.updateLead(id, updateData);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Lead updated successfully',
+        data: updated
+      });
+    } catch (error) {
+      console.error('Error in updateLead:', error);
+      return res.status(error.statusCode || 400).json({
+        success: false,
+        message: error.message
+      });
+    }
   }
 
   /**
@@ -138,8 +214,18 @@ class LeadController {
     try {
       const { id } = req.params;
 
-      // Resolve the caller's acctId from the authenticated context
-      const callerAcctId = req.user?.acctId || req.acctId;
+      // Resolve the caller's acctId — JWT, API key, then query/body with membership check
+      let callerAcctId = req.user?.acctId || req.acctId;
+      if (!callerAcctId) {
+        const candidateAcctId = req.query.acctId || req.body?.acctId;
+        if (candidateAcctId && req.user?.userId) {
+          const linked = await perfomDataExistanceCheck(UserAccount, { userId: req.user.userId, acctId: candidateAcctId });
+          if (!linked) {
+            return res.status(403).json({ success: false, message: 'Access denied: you do not belong to the specified account' });
+          }
+          callerAcctId = candidateAcctId;
+        }
+      }
       if (!callerAcctId) {
         return res.status(403).json({ success: false, message: 'Access denied: no authenticated account' });
       }

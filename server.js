@@ -85,6 +85,7 @@ mongoConnector.connect()
 
 // ── Redis + Queue initialization ───────────────────────────────────────────
 // Run sequentially: Redis must be ready before the worker can connect.
+// Non-fatal in local/dev — server continues without queue features if Redis is unavailable.
 (async () => {
   try {
     await initializeRedis();
@@ -93,8 +94,7 @@ mongoConnector.connect()
     initLeadWorker();
     console.log('[Startup] Lead queue worker started | active queues:', getRegisteredQueues().join(', '));
   } catch (error) {
-    console.error('[Startup] FATAL: Failed to initialize Redis / queue worker:', error.message);
-    process.exit(1);
+    console.warn('[Startup] WARNING: Redis / queue worker unavailable — queue features disabled.', error.message);
   }
 })();
 
@@ -181,7 +181,7 @@ const gracefulShutdown = async (signal) => {
 };
 
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 // Start server
 const server = app.listen(PORT, () => {

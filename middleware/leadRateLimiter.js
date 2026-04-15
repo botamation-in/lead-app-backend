@@ -22,13 +22,19 @@ import logger from '../utils/logger.js';
 // ---------------------------------------------------------------------------
 // Config — driven entirely by environment variables
 // ---------------------------------------------------------------------------
-const MAX_REQUESTS  = parseInt(process.env.LEAD_RATE_LIMIT_MAX       ?? '100', 10);
-const WINDOW_S      = parseInt(process.env.LEAD_RATE_LIMIT_WINDOW_S  ?? '60',  10);
+const MAX_REQUESTS = parseInt(process.env.LEAD_RATE_LIMIT_MAX ?? '100', 10);
+const WINDOW_S = parseInt(process.env.LEAD_RATE_LIMIT_WINDOW_S ?? '60', 10);
 // failOpen=true means: if Redis is unavailable, let the request through rather
 // than blocking legitimate traffic. Set to false for stricter enforcement.
-const FAIL_OPEN     = (process.env.LEAD_RATE_LIMIT_FAIL_OPEN ?? 'true') !== 'false';
+const FAIL_OPEN = (process.env.LEAD_RATE_LIMIT_FAIL_OPEN ?? 'true') !== 'false';
+const REDIS_OP_TIMEOUT_MS = parseInt(process.env.LEAD_RATE_LIMIT_REDIS_TIMEOUT_MS ?? '1500', 10);
 
 const KEY_PREFIX = 'ratelimit:lead:acct:';
+
+const withTimeout = (promise, timeoutMs, message) => Promise.race([
+  promise,
+  new Promise((_, reject) => setTimeout(() => reject(new Error(message)), timeoutMs))
+]);
 
 /**
  * Express middleware — rejects requests over LEAD_RATE_LIMIT_MAX per LEAD_RATE_LIMIT_WINDOW_S
@@ -58,14 +64,26 @@ const leadRateLimiter = async (req, res, next) => {
   try {
     const redis = getRedisConnection();
 
+    if (redis.status !== 'ready') {
+      await withTimeout(
+        redis.connect(),
+        REDIS_OP_TIMEOUT_MS,
+        `Redis connect timed out after ${REDIS_OP_TIMEOUT_MS}ms`
+      );
+    }
+
     // Atomic INCR + TTL check in one round-trip
     const multi = redis.multi();
     multi.incr(key);
     multi.ttl(key);
-    const results = await multi.exec();
+    const results = await withTimeout(
+      multi.exec(),
+      REDIS_OP_TIMEOUT_MS,
+      `Redis rate-limit command timed out after ${REDIS_OP_TIMEOUT_MS}ms`
+    );
 
     const currentCount = results[0][1];
-    const ttl          = results[1][1];
+    const ttl = results[1][1];
 
     // First request in this window — set the expiry
     if (ttl === -1) {
@@ -73,13 +91,13 @@ const leadRateLimiter = async (req, res, next) => {
     }
 
     const windowResetAt = Math.ceil(Date.now() / 1000) + (ttl > 0 ? ttl : WINDOW_S);
-    const remaining     = Math.max(0, MAX_REQUESTS - currentCount);
+    const remaining = Math.max(0, MAX_REQUESTS - currentCount);
 
     // Always send rate limit headers so callers can self-throttle
     res.set({
-      'X-RateLimit-Limit':     MAX_REQUESTS,
+      'X-RateLimit-Limit': MAX_REQUESTS,
       'X-RateLimit-Remaining': remaining,
-      'X-RateLimit-Reset':     windowResetAt
+      'X-RateLimit-Reset': windowResetAt
     });
 
     if (currentCount > MAX_REQUESTS) {
@@ -87,8 +105,8 @@ const leadRateLimiter = async (req, res, next) => {
       logger.warn(`[LeadRateLimit] acctId=${acctId} exceeded ${MAX_REQUESTS} req/${WINDOW_S}s | count=${currentCount} | retryAfter=${retryAfter}s`);
 
       return res.status(429).json({
-        success:    false,
-        message:    `Rate limit exceeded: max ${MAX_REQUESTS} lead requests per ${WINDOW_S} seconds per account.`,
+        success: false,
+        message: `Rate limit exceeded: max ${MAX_REQUESTS} lead requests per ${WINDOW_S} seconds per account.`,
         retryAfter
       });
     }

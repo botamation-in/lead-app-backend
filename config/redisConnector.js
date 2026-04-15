@@ -66,6 +66,11 @@ const createRedisConnection = (connectionName = 'default') => {
 // ---------------------------------------------------------------------------
 let redisConnection = null;
 
+const withTimeout = (promise, timeoutMs, message) => Promise.race([
+  promise,
+  new Promise((_, reject) => setTimeout(() => reject(new Error(message)), timeoutMs))
+]);
+
 /**
  * Get (or lazily create) the singleton Redis connection.
  * Use ONLY for non-BullMQ purposes (health checks, etc.).
@@ -133,7 +138,22 @@ const closeRedisConnection = async () => {
 const isRedisHealthy = async () => {
   try {
     if (!redisConnection) return false;
-    const result = await redisConnection.ping();
+
+    const healthTimeoutMs = parseInt(process.env.REDIS_HEALTH_TIMEOUT_MS ?? '1500', 10);
+
+    if (redisConnection.status !== 'ready') {
+      await withTimeout(
+        redisConnection.connect(),
+        healthTimeoutMs,
+        `Redis health connect timeout after ${healthTimeoutMs}ms`
+      );
+    }
+
+    const result = await withTimeout(
+      redisConnection.ping(),
+      healthTimeoutMs,
+      `Redis health ping timeout after ${healthTimeoutMs}ms`
+    );
     return result === 'PONG';
   } catch (error) {
     logger.error(`[PM2:${PM2_INSTANCE_ID}] Redis health check failed: ${error.message}`);

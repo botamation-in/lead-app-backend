@@ -1,6 +1,12 @@
 import accountApiKeyModel from '../models/accountApiKeyModel.js';
 import { performAggregate } from '../config/mongoConnector.js';
 
+const API_KEY_AUTH_TIMEOUT_MS = parseInt(process.env.API_KEY_AUTH_TIMEOUT_MS ?? '5000', 10);
+const withTimeout = (promise, timeoutMs, message) => Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(message)), timeoutMs))
+]);
+
 /**
  * Middleware to validate x-api-key and acctId against the accountApiKey collection.
  * - Requires both apiKey and acctId to be present
@@ -44,19 +50,23 @@ export const apiKeyAuthMiddleware = async (req, res, next) => {
 
         //TODO: Add caching layer here if needed to reduce DB load for repeated requests with the same apiKey + acctNo
         // 5️⃣ Single query: match apiKey + join Account to verify acctNo — replaces 2 separate queries
-        const results = await performAggregate(accountApiKeyModel, [
-            { $match: { apiKey } },
-            {
-                $lookup: {
-                    from: 'accounts',
-                    localField: 'acctId',
-                    foreignField: '_id',
-                    as: 'account'
-                }
-            },
-            { $unwind: '$account' },
-            { $match: { 'account.acctNo': acctNo } }
-        ]);
+        const results = await withTimeout(
+            performAggregate(accountApiKeyModel, [
+                { $match: { apiKey } },
+                {
+                    $lookup: {
+                        from: 'accounts',
+                        localField: 'acctId',
+                        foreignField: '_id',
+                        as: 'account'
+                    }
+                },
+                { $unwind: '$account' },
+                { $match: { 'account.acctNo': acctNo } }
+            ]),
+            API_KEY_AUTH_TIMEOUT_MS,
+            `apiKeyAuth query timeout after ${API_KEY_AUTH_TIMEOUT_MS}ms`
+        );
 
         if (!results || results.length === 0) {
             return res.status(401).json({ success: false, message: 'Invalid api key or account' });
@@ -73,6 +83,9 @@ export const apiKeyAuthMiddleware = async (req, res, next) => {
         return next();
     } catch (err) {
         console.error('apiKeyAuthMiddleware error', err);
+        if (err.message && err.message.includes('timeout')) {
+            return res.status(503).json({ success: false, message: 'Authentication service timeout. Please retry.' });
+        }
         return res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
