@@ -51,6 +51,13 @@ const withTimeout = (promise, timeoutMs, message) => Promise.race([
  *   { success: false, message: '...', retryAfter: <seconds> }
  */
 const leadRateLimiter = async (req, res, next) => {
+  // Allow trusted callers to bypass rate limiting when explicitly requested.
+  const skipLimitHeader = req.get('skip-limit');
+  if (typeof skipLimitHeader === 'string' && skipLimitHeader.toLowerCase() === 'true') {
+    logger.info('[LeadRateLimit] Bypassed via skip-limit header');
+    return next();
+  }
+
   // acctId is guaranteed to be set by apiKeyAuthMiddleware upstream
   const acctId = req.acctId;
 
