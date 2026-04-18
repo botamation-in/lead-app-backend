@@ -226,8 +226,8 @@ class LeadController {
     try {
       const { id } = req.params;
 
-      // Require acctId in the request body
-      const bodyAcctId = req.body?.acctId;
+      // Require acctId from query params or body
+      const bodyAcctId = req.query?.acctId || req.body?.acctId;
       if (!bodyAcctId) {
         return res.status(400).json({ success: false, message: 'acctId is required' });
       }
