@@ -16,7 +16,7 @@ const accountApiKeySchema = new mongoose.Schema(
             required: true
         }
     },
-    { timestamps: true, collection: 'account_api_keys' }
+    { timestamps: true, collection: 'accountApiKey' }
 );
 
 // Index for API key auth middleware — runs on every inbound API request

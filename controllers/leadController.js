@@ -30,8 +30,20 @@ class LeadController {
 
       const mergeProperties = body?.config?.merge?.properties ?? null;
 
-      // acctId is set on req by both apiKey and SSO middlewares — no DB lookup needed
-      const acctId = req.user?.acctId || req.acctId;
+      // acctId is set on req by both apiKey and SSO middlewares — no DB lookup needed.
+      // JWT may not carry acctId (multi-tenant). Fall back to query param or body,
+      // then verify the user belongs to that account.
+      let acctId = req.user?.acctId || req.acctId;
+      if (!acctId) {
+        const candidateAcctId = req.query.acctId || req.body?.acctId;
+        if (candidateAcctId && req.user?.userId) {
+          const linked = await perfomDataExistanceCheck(UserAccount, { userId: req.user.userId, acctId: candidateAcctId });
+          if (!linked) {
+            return res.status(403).json({ success: false, message: 'Access denied: you do not belong to the specified account' });
+          }
+          acctId = candidateAcctId;
+        }
+      }
       if (!acctId) {
         return res.status(400).json({
           success: false,
@@ -214,20 +226,25 @@ class LeadController {
     try {
       const { id } = req.params;
 
-      // Resolve the caller's acctId — JWT, API key, then query/body with membership check
+      // Require acctId in the request body
+      const bodyAcctId = req.body?.acctId;
+      if (!bodyAcctId) {
+        return res.status(400).json({ success: false, message: 'acctId is required' });
+      }
+
+      // Resolve the caller's acctId — JWT, API key, body
       let callerAcctId = req.user?.acctId || req.acctId;
       if (!callerAcctId) {
-        const candidateAcctId = req.query.acctId || req.body?.acctId;
-        if (candidateAcctId && req.user?.userId) {
-          const linked = await perfomDataExistanceCheck(UserAccount, { userId: req.user.userId, acctId: candidateAcctId });
+        if (bodyAcctId && req.user?.userId) {
+          const linked = await perfomDataExistanceCheck(UserAccount, { userId: req.user.userId, acctId: bodyAcctId });
           if (!linked) {
             return res.status(403).json({ success: false, message: 'Access denied: you do not belong to the specified account' });
           }
-          callerAcctId = candidateAcctId;
+          callerAcctId = bodyAcctId;
         }
       }
       if (!callerAcctId) {
-        return res.status(403).json({ success: false, message: 'Access denied: no authenticated account' });
+        callerAcctId = bodyAcctId;
       }
 
       // Verify the lead belongs to the caller's account before deleting
