@@ -63,17 +63,17 @@ class AnalyticsController {
       const { acctId, userId, selectedUserId } = req.body;
 
       if (!acctId || !userId || !selectedUserId) {
-        return res.status(400).json({ 
-          success: false, 
-          message: 'acctId, userId, and selectedUserId are required' 
+        return res.status(400).json({
+          success: false,
+          message: 'acctId, userId, and selectedUserId are required'
         });
       }
 
       // Get the schema by adminId (selectedUserId is the adminId)
       const result = await analyticsService.getSchemaByAdminId({ adminId: selectedUserId, acctId });
 
-      return res.status(200).json({ 
-        success: true, 
+      return res.status(200).json({
+        success: true,
         data: result || null,
         viewingAs: selectedUserId
       });
