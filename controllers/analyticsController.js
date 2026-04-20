@@ -2,6 +2,88 @@ import analyticsService from '../services/analyticsService.js';
 
 class AnalyticsController {
   /**
+   * Save dashboard schema
+   * POST /api/ui/analytics/save-schema
+   */
+  async saveSchema(req, res) {
+    try {
+      const { userId, acctId, adminId, schema } = req.body;
+
+      if (!userId || !acctId || !schema) {
+        return res.status(400).json({ success: false, message: 'userId, acctId, and schema are required' });
+      }
+
+      const result = await analyticsService.saveSchema({ userId, acctId, adminId, schema });
+
+      return res.status(200).json({ success: true, message: 'Schema saved successfully', data: result });
+    } catch (error) {
+      console.error('Error in saveSchema:', error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * Get dashboard schema
+   * GET /api/ui/analytics/get-schema
+   */
+  async getSchema(req, res) {
+    try {
+      const { userId, acctId, viewingAs, selectedUserId } = req.query;
+
+      if (!acctId) {
+        return res.status(400).json({ success: false, message: 'acctId is required' });
+      }
+
+      // In view-as mode, selectedUserId/viewingAs represents the admin context.
+      const effectiveAdminId = selectedUserId || viewingAs || null;
+
+      let result = null;
+      if (effectiveAdminId) {
+        result = await analyticsService.getSchemaByAdminId({ adminId: effectiveAdminId, acctId });
+      }
+
+      // Backward-compatible fallback for older records keyed by userId.
+      if (!result && userId) {
+        result = await analyticsService.getSchema({ userId, acctId });
+      }
+
+      return res.status(200).json({ success: true, data: result || null });
+    } catch (error) {
+      console.error('Error in getSchema:', error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * View analytics as another user (admin feature)
+   * POST /api/ui/analytics/view-as
+   */
+  async viewAs(req, res) {
+    try {
+      const { acctId, userId, selectedUserId } = req.body;
+
+      if (!acctId || !userId || !selectedUserId) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'acctId, userId, and selectedUserId are required' 
+        });
+      }
+
+      // Get the schema by adminId (selectedUserId is the adminId)
+      const result = await analyticsService.getSchemaByAdminId({ adminId: selectedUserId, acctId });
+
+      return res.status(200).json({ 
+        success: true, 
+        data: result || null,
+        viewingAs: selectedUserId
+      });
+    } catch (error) {
+      console.error('Error in viewAs:', error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
    * Get chart data
    * GET /api/analytics/chart-data
    */

@@ -12,4 +12,9 @@ const router = express.Router();
 router.post('/chart-data', analyticsController.getChartData.bind(analyticsController));
 router.get('/chart-data', analyticsController.getChartData.bind(analyticsController));
 
+router.post('/save-schema', analyticsController.saveSchema.bind(analyticsController));
+router.get('/get-schema', analyticsController.getSchema.bind(analyticsController));
+
+router.post('/view-as', analyticsController.viewAs.bind(analyticsController));
+
 export default router;

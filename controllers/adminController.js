@@ -1,4 +1,4 @@
-import { syncAdminsFromPlatform, getAdminsFromDb as getAdminsFromDbService } from '../services/adminService.js';
+import { getAdminsFromDb as getAdminsFromDbService } from '../services/adminService.js';
 import logger from '../utils/logger.js';
 
 /**
@@ -31,12 +31,12 @@ export const getAdminsFromDb = async (req, res) => {
 
 /**
  * GET /api/ui/admins?acctId=<acctId>
- * Fetch admins from the Botamation platform API and sync to local DB.
+ * Fetch admins for an account from the local account_admins collection.
  * @access  Protected (SSO)
  */
 export const getAdmins = async (req, res) => {
     try {
-        const { acctId } = req.query;
+        const { acctId, ...filters } = req.query;
 
         if (!acctId) {
             return res.status(400).json({ success: false, message: 'acctId query parameter is required' });
@@ -47,12 +47,12 @@ export const getAdmins = async (req, res) => {
             return res.status(403).json({ success: false, message: 'Access denied: acctId does not match authenticated user' });
         }
 
-        const admins = await syncAdminsFromPlatform(acctId);
+        const result = await getAdminsFromDbService(acctId, filters);
 
-        return res.status(200).json({ success: true, admins });
+        return res.status(200).json({ success: true, ...result });
     } catch (error) {
         logger.error('Failed to fetch admins', { error: error.message });
-        const status = error.statusCode || error.response?.status || 500;
+        const status = error.statusCode || 500;
         return res.status(status).json({ success: false, message: error.message || 'Failed to fetch admins' });
     }
 };
