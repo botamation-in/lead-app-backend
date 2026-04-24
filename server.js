@@ -34,7 +34,7 @@ if (hasAWSCredentials) {
 }
 
 const app = express();
-const PORT = process.env.PORT || 8081;
+const PORT = process.env.SERVER_PORT || process.env.PORT || 8081;
 
 // Parse allowed origins from environment variable
 const allowedOrigins = process.env.ALLOWED_ORIGINS
@@ -181,7 +181,7 @@ const gracefulShutdown = async (signal) => {
 };
 
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 // Start server
 const server = app.listen(PORT, () => {
