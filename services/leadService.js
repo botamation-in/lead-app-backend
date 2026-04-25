@@ -231,8 +231,9 @@ class LeadService {
         catFields = Object.keys(leads[0]).filter(k => !EXCLUDE.has(k));
       }
 
-      // Always append createdAt and updatedAt at the end (they are Mongoose timestamps,
-      // not stored in the category fields[] array).
+      // Always ensure createdAt and updatedAt appear at the end (they are Mongoose timestamps,
+      // not stored in the category fields[] array). Strip first to avoid duplicates.
+      catFields = catFields.filter(f => f !== 'createdAt' && f !== 'updatedAt');
       catFields = [...catFields, 'createdAt', 'updatedAt'];
 
       return {

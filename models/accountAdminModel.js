@@ -36,7 +36,7 @@ const accountAdminSchema = new mongoose.Schema(
             default: null
         }
     },
-    { timestamps: true, collection: 'accountAdmins' }
+    { timestamps: true, collection: 'account_admins' }
 );
 
 // Compound index for admin upsert filter and admin list queries (acctNo prefix covers single-field acctNo queries too)
