@@ -51,7 +51,7 @@ class LeadController {
         });
       }
 
-      const category = req.params.category || req.params.id || (Array.isArray(data) ? null : data.category) || req.query.category || null;
+      const category = req.params.category || (Array.isArray(data) ? null : data.category) || req.query.category || null;
       // Strip category field from lead payload so it's not stored on the lead
       const leadPayload = Array.isArray(data)
         ? data.map(({ category: _, ...rest }) => rest)
@@ -198,7 +198,7 @@ class LeadController {
       if (!existing) {
         return res.status(404).json({ success: false, message: 'Lead not found' });
       }
-      if (existing.acctId !== callerAcctId) {
+      if (existing.acctId.toString() !== callerAcctId.toString()) {
         return res.status(403).json({ success: false, message: 'Access denied: lead does not belong to your account' });
       }
 
@@ -252,7 +252,7 @@ class LeadController {
       if (!existing) {
         return res.status(404).json({ success: false, message: 'Lead not found' });
       }
-      if (existing.acctId !== callerAcctId) {
+      if (existing.acctId.toString() !== callerAcctId.toString()) {
         return res.status(403).json({ success: false, message: 'Access denied: lead does not belong to your account' });
       }
 
@@ -387,6 +387,36 @@ class LeadController {
       }
       console.error('Error in setDefaultCategory:', error);
       return res.status(400).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
+   * Delete a category and all its associated leads
+   * DELETE /api/ui/leads/categories/:categoryId
+   */
+  async deleteCategory(req, res) {
+    try {
+      const { categoryId } = req.params;
+      const acctId = req.user?.acctId || req.acctId || req.body.acctId || req.query.acctId;
+      if (!acctId) {
+        return res.status(400).json({ success: false, message: 'acctId is required' });
+      }
+      if (!categoryId) {
+        return res.status(400).json({ success: false, message: 'categoryId is required' });
+      }
+
+      const result = await leadService.deleteCategory(acctId, categoryId);
+      return res.status(200).json({
+        success: true,
+        message: `Category "${result.categoryName}" and ${result.deletedLeads} associated lead(s) deleted successfully`,
+        data: result
+      });
+    } catch (error) {
+      if (error.statusCode === 404) {
+        return res.status(404).json({ success: false, message: error.message });
+      }
+      console.error('Error in deleteCategory:', error);
+      return res.status(500).json({ success: false, message: error.message });
     }
   }
 }

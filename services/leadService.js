@@ -139,10 +139,12 @@ class LeadService {
         );
         const searchConditions = searchableFields.map(field => ({ [field]: { $regex: search, $options: 'i' } }));
         // Keep acctId + categoryId scope, add search as $or across text fields
-        query.$and = [{ acctId }, { $or: searchConditions }];
+        const scopeConditions = [{ acctId }];
+        if (query.categoryId) scopeConditions.push({ categoryId: query.categoryId });
+        query.$and = [...scopeConditions, { $or: searchConditions }];
         delete query.acctId;
+        delete query.categoryId;
       }
-
       const skip = (page - 1) * limit;
       const sort = { [sortBy]: sortOrder };
 
@@ -197,7 +199,7 @@ class LeadService {
                   $lookup: {
                     from: 'lead_categories',
                     pipeline: [
-                      { $match: { _id: categoryId } },
+                      { $match: { _id: mongoose.Types.ObjectId.isValid(categoryId) ? new mongoose.Types.ObjectId(categoryId) : categoryId } },
                       { $project: { _id: 0, fields: 1 } }
                     ],
                     as: '_catDoc'
@@ -372,6 +374,38 @@ class LeadService {
     } catch (error) {
       console.error('Error setting default category:', error);
       throw error.statusCode ? error : new Error(`Failed to set default category: ${error.message}`);
+    }
+  }
+
+  /**
+   * Delete a category and all its associated leads.
+   * @param {string} acctId
+   * @param {string} categoryId
+   * @returns {{ deletedLeads: number, deletedCategory: boolean }}
+   */
+  async deleteCategory(acctId, categoryId) {
+    try {
+      const category = await LeadCategory.findOne({ _id: categoryId, acctId }).lean();
+      if (!category) {
+        const err = new Error('Category not found');
+        err.statusCode = 404;
+        throw err;
+      }
+
+      // Delete all leads belonging to this category
+      const leadsResult = await Lead.deleteMany({ acctId, categoryId });
+
+      // Delete the category itself
+      await LeadCategory.deleteOne({ _id: categoryId, acctId });
+
+      return {
+        deletedLeads: leadsResult.deletedCount,
+        deletedCategory: true,
+        categoryName: category.categoryName
+      };
+    } catch (error) {
+      console.error('Error deleting category:', error);
+      throw error.statusCode ? error : new Error(`Failed to delete category: ${error.message}`);
     }
   }
 }
