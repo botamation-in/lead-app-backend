@@ -22,6 +22,7 @@ const resolveAcctNo = async (acctId) => {
  * Fetch admins from the Botamation platform, sync to local DB, and return normalised list.
  */
 export const syncAdminsFromPlatform = async (acctId) => {
+    // acctNo is still required to call the Botamation platform API (page_id param)
     const acctNo = await resolveAcctNo(acctId);
 
     const admins = await getAdminsService(acctNo);
@@ -29,7 +30,7 @@ export const syncAdminsFromPlatform = async (acctId) => {
     // ── Print full admin details from Botamation ──────────────────────
     const adminList = Array.isArray(admins) ? admins : [admins];
     console.log('\n[AdminService] ══════════════════════════════════════');
-    console.log(`[AdminService] Full admin details from Botamation (acctNo: ${acctNo})`);
+    console.log(`[AdminService] Full admin details from Botamation (acctId: ${acctId})`);
     console.log(`[AdminService] Total admins returned: ${adminList.length}`);
     adminList.forEach((a, i) => {
         console.log(`\n[AdminService] ── Admin #${i + 1} ──────────────────────────`);
@@ -51,13 +52,13 @@ export const syncAdminsFromPlatform = async (acctId) => {
             ?? a.profile_photo ?? a.dp ?? null
     }));
 
-    // Upsert each admin returned by Botamation
+    // Upsert each admin returned by Botamation — scoped by acctId
     await Promise.all(
         normalised.map((admin) => {
             const filter = admin.adminId
-                ? { acctNo, adminId: admin.adminId }
-                : { acctNo, email: admin.email };
-            return performUpsert(AccountAdmin, filter, { ...admin, acctNo });
+                ? { acctId, adminId: admin.adminId }
+                : { acctId, email: admin.email };
+            return performUpsert(AccountAdmin, filter, { ...admin, acctId });
         })
     );
 
@@ -65,7 +66,7 @@ export const syncAdminsFromPlatform = async (acctId) => {
     const activeAdminIds = normalised.map((a) => a.adminId).filter(Boolean);
     const activeEmails = normalised.map((a) => a.email).filter(Boolean);
     const deleteResult = await performDelete(AccountAdmin, {
-        acctNo,
+        acctId,
         $nor: [
             { adminId: { $in: activeAdminIds } },
             { email: { $in: activeEmails } }
@@ -73,7 +74,7 @@ export const syncAdminsFromPlatform = async (acctId) => {
     });
 
     logger.info('Admins synced to database', {
-        acctNo,
+        acctId,
         upserted: normalised.length,
         removed: deleteResult.deletedCount
     });
@@ -83,11 +84,10 @@ export const syncAdminsFromPlatform = async (acctId) => {
 
 /**
  * Fetch admins for an account from the local DB with optional filtering and pagination.
+ * Uses acctId directly — no resolveAcctNo round-trip needed.
  */
 export const getAdminsFromDb = async (acctId, { page, limit, sortBy, sortOrder, firstName, lastName, email, phone } = {}) => {
-    const acctNo = await resolveAcctNo(acctId);
-
-    const query = { acctNo };
+    const query = { acctId };
 
     if (firstName) query.firstName = { $regex: firstName, $options: 'i' };
     if (lastName) query.lastName = { $regex: lastName, $options: 'i' };

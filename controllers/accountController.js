@@ -94,16 +94,16 @@ export const verifyAccount = async (req, res) => {
                                 ?? a.picture ?? a.photo ?? a.avatar ?? a.image ?? a.thumbnail
                                 ?? a.profile_photo ?? a.dp ?? null
                         }));
-                        // Persist admins to the local database
+                        // Persist admins to the local database — scoped by acctId
                         await Promise.all(
                             normalised.map((admin) => {
                                 const filter = admin.adminId
-                                    ? { acctNo, adminId: admin.adminId }
-                                    : { acctNo, email: admin.email };
-                                return performUpsert(AccountAdmin, filter, { ...admin, acctNo });
+                                    ? { acctId, adminId: admin.adminId }
+                                    : { acctId, email: admin.email };
+                                return performUpsert(AccountAdmin, filter, { ...admin, acctId });
                             })
                         );
-                        logger.info('Admins synced to database during account verification', { acctNo, count: normalised.length });
+                        logger.info('Admins synced to database during account verification', { acctId, count: normalised.length });
                         const matchedAdmin = findAdminByEmail(admins, email);
                         if (!matchedAdmin) {
                             return res.status(403).json({

@@ -6,7 +6,7 @@ const accountAdminSchema = new mongoose.Schema(
             type: String,
             default: () => new mongoose.Types.ObjectId().toHexString()
         },
-        acctNo: {
+        acctId: {
             type: String,
             required: true,
             trim: true
@@ -39,8 +39,8 @@ const accountAdminSchema = new mongoose.Schema(
     { timestamps: true, collection: 'account_admins' }
 );
 
-// Compound index for admin upsert filter and admin list queries (acctNo prefix covers single-field acctNo queries too)
-accountAdminSchema.index({ acctNo: 1, adminId: 1 });
+// Compound index for admin upsert filter and admin list queries (acctId prefix covers single-field acctId queries too)
+accountAdminSchema.index({ acctId: 1, adminId: 1 });
 
 // Index for lead enrichment — find admins by adminId $in after every paginated lead list
 accountAdminSchema.index({ adminId: 1 });
