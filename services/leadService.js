@@ -61,10 +61,12 @@ class LeadService {
       const buildMergeFilter = (item) => {
         if (!mergeProperties?.length) return {};
         const filter = { acctId };
+        let mergeFieldFound = false;
         for (const prop of mergeProperties) {
-          if (prop in item) filter[prop] = item[prop];
+          if (prop in item) { filter[prop] = item[prop]; mergeFieldFound = true; }
         }
-        return filter;
+        // If none of the merge fields are present in the data, treat as a new insert
+        return mergeFieldFound ? filter : {};
       };
 
       // Query 2 of 2 (was 4 of 4): Insert lead(s)
